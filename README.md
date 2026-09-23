@@ -6,11 +6,19 @@
 
 需要 Python 3.11、`uv`、本机可用的 `say` 与 FFmpeg，以及 **GGML 格式**的 Whisper 模型文件。Buzz 缓存中的 `.pt` 权重不能直接填入 `WHISPER_MODEL_PATH`。
 
+本工作区已下载并验证 `models/ggml-large-v3-turbo-q5_0.bin`。新机器可用以下命令从 whisper.cpp 模型仓库下载约 547 MB 的量化模型：
+
+```bash
+mkdir -p models
+curl --fail --location --output models/ggml-large-v3-turbo-q5_0.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin
+```
+
 ```bash
 uv venv --python 3.11 .venv
 uv pip install --python .venv/bin/python -r requirements.txt
-cp .env.example .env
-# 编辑 .env：填写 WHISPER_MODEL_PATH；问答功能还需 DEEPSEEK_API_KEY
+test -f .env || cp .env.example .env
+# 模型路径已填入示例；如需问答，在本地 .env 填入 DEEPSEEK_API_KEY
 .venv/bin/uvicorn src.server:app --host 127.0.0.1 --port 8000 --env-file .env
 ```
 
@@ -26,6 +34,6 @@ cp .env.example .env
 
 ## 验证与限制
 
-运行 `.venv/bin/python -m pytest -q` 可验证音频帧顺序、重复帧、WebSocket 转写到最终纪要的流程；测试用模拟 ASR，不代表真实普通话或粤语识别质量。当前 VAD 是能量阈值法，安静发言或嘈杂环境可能漏检。Whisper 字幕是分段和周期快照，不是原生逐帧流式解码。PDF 不做扫描件 OCR，网页搜索依赖外部搜索服务。
+运行 `.venv/bin/python -m pytest -q` 可验证音频帧顺序、重复帧、WebSocket 转写到最终纪要的流程；自动化测试使用模拟 ASR。本机另以合成普通话和粤语分别完成真实 Whisper 转写，并以合成普通话跑通 WebSocket 收音、转写、入库和最终纪要；这不代表真人语音识别质量。当前 VAD 是能量阈值法，安静发言或嘈杂环境可能漏检。Whisper 字幕是分段和周期快照，不是原生逐帧流式解码。PDF 不做扫描件 OCR，网页搜索依赖外部搜索服务。
 
 架构取舍和验收方案见 [ARCHITECTURE.md](ARCHITECTURE.md)。

@@ -7,6 +7,7 @@ import uuid
 from fastapi.testclient import TestClient
 
 from src.models import Language
+from src.agent import extract_wake_query
 from src.server import app
 from src.storage import Storage
 
@@ -14,6 +15,11 @@ from src.storage import Storage
 class FakeASR:
     async def transcribe(self, segment):
         return "今天决定采用方案A"
+
+
+def test_wake_phrase_handles_whisper_homophone_only_at_sentence_start():
+    assert extract_wake_query("小慧，刚才决定了什么？") == "刚才决定了什么？"
+    assert extract_wake_query("我们刚才提到小慧") is None
 
 
 def test_websocket_audio_to_final_minutes(monkeypatch, tmp_path):
