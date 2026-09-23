@@ -99,11 +99,20 @@ class Storage:
             raise ValueError("invalid audio frame")
         with self._lock:
             last_seq, expected_offset = self.audio_position(meeting_id)
+            audio_path = self.data_dir / "meetings" / meeting_id / "audio.pcm"
             if seq <= last_seq:
+                if sample_offset + len(pcm) // 2 > expected_offset:
+                    raise ValueError("duplicate audio frame exceeds stored audio")
+                try:
+                    with audio_path.open("rb") as audio_file:
+                        audio_file.seek(sample_offset * 2)
+                        if audio_file.read(len(pcm)) != pcm:
+                            raise ValueError("duplicate audio frame conflicts with stored audio")
+                except FileNotFoundError as exc:
+                    raise ValueError("stored audio is missing") from exc
                 return False
             if seq != last_seq + 1 or sample_offset != expected_offset:
                 raise ValueError(f"audio gap: expected seq={last_seq + 1}, offset={expected_offset}")
-            audio_path = self.data_dir / "meetings" / meeting_id / "audio.pcm"
             audio_path.parent.mkdir(parents=True, exist_ok=True)
             with audio_path.open("r+b" if audio_path.exists() else "w+b") as audio_file:
                 audio_file.seek(0, 2)

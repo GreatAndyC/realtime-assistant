@@ -69,6 +69,12 @@ def test_audio_sequence_is_idempotent_and_rejects_gaps(tmp_path):
     assert store.append_audio("meeting-1", 0, 0, b"\x00\x00")
     assert not store.append_audio("meeting-1", 0, 0, b"\x00\x00")
     try:
+        store.append_audio("meeting-1", 0, 0, b"\x01\x00")
+    except ValueError as exc:
+        assert "conflicts" in str(exc)
+    else:
+        raise AssertionError("conflicting retransmission was accepted")
+    try:
         store.append_audio("meeting-1", 2, 1, b"\x00\x00")
     except ValueError as exc:
         assert "audio gap" in str(exc)
