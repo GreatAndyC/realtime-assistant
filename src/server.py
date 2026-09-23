@@ -5,6 +5,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import struct
 import time
 import uuid
@@ -59,12 +60,17 @@ async def meeting_detail(meeting_id: str):
 class MeetingSession:
     def __init__(self, ws: WebSocket, meeting_id: str, settings: ConfigMessage):
         from .asr import EnergyVAD, get_asr
+        from .speakers import SpeakerDiarizer
 
         self.ws = ws
         self.meeting_id = meeting_id
         self.settings = settings
         self.vad = EnergyVAD()
         self.asr = get_asr()
+        prior_labels = (re.fullmatch(r"说话人(\d+)", item.speaker)
+                        for item in storage.list_utterances(meeting_id))
+        last_index = max((int(match.group(1)) for match in prior_labels if match), default=0)
+        self.speakers = SpeakerDiarizer(start_index=last_index)
         self.queue: asyncio.Queue[AudioSegment] = asyncio.Queue(maxsize=32)
         self.send_lock = asyncio.Lock()
         self.answer_task: asyncio.Task | None = None
@@ -114,7 +120,7 @@ class MeetingSession:
         await self.send(WSEventType.ACK, {"seq": seq})
         if not fresh:
             return
-        for segment in self.vad.push(pcm, self.meeting_id, self.settings.speaker,
+        for segment in self.vad.push(pcm, self.meeting_id, "识别中",
                                      self.settings.language, seq):
             await self.queue.put(segment)
         if self.vad.partial_due() and (self.partial_task is None or self.partial_task.done()):
@@ -141,11 +147,18 @@ class MeetingSession:
         while True:
             segment = await self.queue.get()
             try:
-                text = (await self.asr.transcribe(segment)).strip()
+                text, language = await self.asr.transcribe_with_language(segment)
+                text = text.strip()
                 if text:
+                    try:
+                        speaker = await self.speakers.identify(segment.pcm_bytes)
+                    except Exception as exc:
+                        log.exception("Speaker classification failed")
+                        speaker = "待确认发言人"
+                        await self.error("SPEAKER_FAILED", str(exc))
                     utterance = Utterance(
                         utterance_id=uuid.uuid4().hex, meeting_id=self.meeting_id,
-                        speaker=segment.speaker, language=segment.language, text=text,
+                        speaker=speaker, language=language, text=text,
                         timestamp_ms=int(time.time() * 1000), seq=segment.seq_end,
                     )
                     storage.save_utterance(utterance)
@@ -154,7 +167,7 @@ class MeetingSession:
                                      "speaker": utterance.speaker, "language": utterance.language.value,
                                      "seq": utterance.seq, "timestamp_ms": utterance.timestamp_ms},
                                     utterance_id=utterance.utterance_id)
-                    self._maybe_start_answer(text)
+                    await self._handle_utterance(text, language)
                     self._maybe_checkpoint()
             except Exception as exc:
                 log.exception("ASR segment failed")
@@ -163,45 +176,49 @@ class MeetingSession:
             finally:
                 self.queue.task_done()
 
-    def _maybe_start_answer(self, text: str):
-        from .agent import extract_wake_query
+    async def _handle_utterance(self, text: str, language: Language):
+        from .agent import extract_wake_query, is_stop_command
 
+        if is_stop_command(text):
+            await self.stop_answer()
+            return
         question = extract_wake_query(text)
         if question is None or self.ending:
             return
         if self.answer_task and not self.answer_task.done():
             asyncio.create_task(self.error("AGENT_BUSY", "Assistant is answering another question"))
             return
-        self.answer_task = asyncio.create_task(self._answer(question))
+        self.answer_task = asyncio.create_task(self._answer(question, language))
 
-    async def _answer(self, question: str):
+    async def stop_answer(self):
+        """Cancel generation and tell the browser to stop any audio already playing."""
+        if self.answer_task and not self.answer_task.done():
+            self.answer_task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await self.answer_task
+        await self.send(WSEventType.TTS_STOP, {})
+        if not self.ending and self.state != AgentState.LISTENING:
+            await self.set_state(AgentState.LISTENING)
+
+    async def _answer(self, question: str, language: Language):
         from .agent import build_messages, stream_answer
-        from .search import needs_web_search, search_local, search_web
+        from .tool_agent import gather_agent_evidence
         from .tts import synthesize_speech
 
         request_id = uuid.uuid4().hex
         await self.set_state(AgentState.ANSWERING)
         try:
-            await self.send(WSEventType.SEARCH_STARTED,
-                            {"request_id": request_id, "source": "local"}, request_id=request_id)
-            snippets = await asyncio.to_thread(search_local, question)
-            local_snippets = snippets
-            if needs_web_search(question, local_snippets):
-                await self.send(WSEventType.SEARCH_STARTED,
-                                {"request_id": request_id, "source": "web"}, request_id=request_id)
-                try:
-                    web_snippets = await asyncio.wait_for(search_web(question), config.web_search_timeout)
-                    snippets = (local_snippets + web_snippets)[:config.max_search_snippets]
-                except Exception as exc:
-                    await self.error("WEB_SEARCH_FAILED", str(exc), request_id=request_id)
-            snippets = snippets[:config.max_search_snippets]
+            async def emit_step(step):
+                await self.send(WSEventType.AGENT_STEP, step, request_id=request_id)
+
+            snippets = await gather_agent_evidence(question, storage, self.meeting_id, emit_step)
             await self.send(WSEventType.SEARCH_RESULT,
                             {"request_id": request_id, "source": "web" if any(
                              s.get("source") == "web" for s in snippets) else "local",
                              "snippets": snippets}, request_id=request_id)
             recent = storage.list_utterances(self.meeting_id, config.max_recent_utterances)
             summaries = storage.list_phase_summaries(self.meeting_id)
-            messages = build_messages(question, recent, summaries, snippets)
+            messages = build_messages(question, recent, summaries, snippets, language=language)
             full = ""
             async for delta in stream_answer(messages):
                 full += delta
@@ -211,7 +228,7 @@ class MeetingSession:
                             {"request_id": request_id, "full_text": full}, request_id=request_id)
             if full.strip():
                 try:
-                    audio = await synthesize_speech(full, self.settings.language)
+                    audio = await synthesize_speech(full, language)
                     await self.send(WSEventType.TTS_AUDIO,
                                     {"request_id": request_id,
                                      "audio_b64": base64.b64encode(audio).decode("ascii"),
@@ -318,6 +335,8 @@ async def meeting_socket(ws: WebSocket, meeting_id: str):
                     task = asyncio.create_task(session.minutes("partial"))
                     session.minutes_tasks.add(task)
                     task.add_done_callback(session.minutes_tasks.discard)
+                elif kind == ControlType.STOP_ANSWER.value:
+                    await session.stop_answer()
                 elif kind == ControlType.END_MEETING.value:
                     await session.end()
                     break

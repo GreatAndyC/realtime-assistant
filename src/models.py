@@ -18,11 +18,13 @@ class WSEventType(str, Enum):
     ASR_PARTIAL   = "asr.partial"
     ASR_FINAL     = "asr.final"
     AGENT_STATE   = "agent.state"
+    AGENT_STEP    = "agent.step"
     SEARCH_STARTED = "search.started"
     SEARCH_RESULT  = "search.result"
     LLM_DELTA     = "llm.delta"
     LLM_DONE      = "llm.done"
     TTS_AUDIO     = "tts.audio"
+    TTS_STOP      = "tts.stop"
     MINUTES_READY = "minutes.ready"
     ERROR         = "error"
     ACK           = "ack"
@@ -33,6 +35,7 @@ class ControlType(str, Enum):
     CONFIG          = "config"
     FLUSH           = "flush"
     PARTIAL_MINUTES = "partial_minutes"
+    STOP_ANSWER    = "stop_answer"
     END_MEETING     = "end_meeting"
 
 
@@ -44,6 +47,7 @@ class AgentState(str, Enum):
 
 
 class Language(str, Enum):
+    AUTO = "auto"  # 按每段发言自动识别
     ZH  = "zh"   # 普通话
     YUE = "yue"  # 粤语
 
@@ -54,7 +58,7 @@ class Language(str, Enum):
 
 class ConfigMessage(BaseModel):
     type: str = ControlType.CONFIG
-    language: Language = Language.ZH
+    language: Language = Language.AUTO
     speaker: str = "未知发言人"
     resume_from: Optional[int] = None  # 上次确认的音频序号，用于断线续传
 

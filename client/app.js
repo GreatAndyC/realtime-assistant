@@ -1,11 +1,11 @@
 const $ = id => document.getElementById(id);
 const ui = {
-  meeting: $('meeting-id'), language: $('language'), speaker: $('speaker'),
+  meeting: $('meeting-id'), language: $('language'),
   start: $('start-button'), pause: $('pause-button'), flush: $('flush-button'),
-  minutesButton: $('minutes-button'), end: $('end-button'), play: $('play-button'),
+  minutesButton: $('minutes-button'), end: $('end-button'), play: $('play-button'), stopAnswer: $('stop-answer-button'),
   connection: $('connection-pill'), mic: $('mic-indicator'), transcript: $('transcript'),
   partial: $('partial'), state: $('agent-state'), search: $('search-status'),
-  answer: $('answer'), sources: $('sources'), minutes: $('minutes'),
+  answer: $('answer'), sources: $('sources'), trace: $('agent-trace'), minutes: $('minutes'),
   minutesPhase: $('minutes-phase'), notice: $('notice'),
 };
 
@@ -15,8 +15,9 @@ const app = {
   reconnectTimer: null, reconnectDelay: 500, shouldReconnect: false,
   active: false, recording: false, ending: false, meetingId: '',
   nextSeq: 0, nextOffset: 0, lastAck: -1, pending: new Map(),
-  utterances: new Set(), answerRequest: null, latestAudio: null,
-  audioQueue: [], playing: false,
+  utterances: new Set(), answerRequest: null, traceRequest: null, evidenceSnippets: [], latestAudio: null,
+  audioQueue: [], playing: false, currentAudio: null, audioWaitResolve: null,
+  playbackGeneration: 0, agentState: 'LISTENING',
 };
 
 function notice(message, error = false) {
@@ -34,9 +35,9 @@ function updateControls() {
   ui.flush.disabled = !app.active || app.ending;
   ui.minutesButton.disabled = !app.active || app.ending;
   ui.end.disabled = !app.active || app.ending;
+  ui.stopAnswer.disabled = !app.playing && app.agentState !== 'ANSWERING';
   ui.meeting.disabled = app.active;
   ui.language.disabled = app.active;
-  ui.speaker.disabled = app.active;
   ui.mic.textContent = app.recording ? '● 正在收音' : '麦克风关闭';
   ui.mic.classList.toggle('live', app.recording);
   ui.connection.classList.toggle('recording', app.recording);
@@ -89,7 +90,7 @@ function connect() {
       if (app.socket !== socket) return;
       app.reconnectDelay = 500;
       socket.send(JSON.stringify({
-        type: 'config', language: ui.language.value, speaker: ui.speaker.value.trim() || '未知发言人',
+        type: 'config', language: ui.language.value, speaker: '自动识别',
         resume_from: app.lastAck >= 0 ? app.lastAck : null,
       }));
       // Wait for the server checkpoint before sending new or buffered audio.
@@ -294,20 +295,47 @@ function enqueueAudio(data) {
   } catch { notice('回答音频无法解码。', true); }
 }
 
+function stopAnswerPlayback() {
+  app.playbackGeneration++;
+  const urls = new Set([...app.audioQueue, app.latestAudio].filter(Boolean));
+  app.audioQueue.length = 0;
+  if (app.currentAudio) {
+    app.currentAudio.pause();
+    app.currentAudio.currentTime = 0;
+    urls.add(app.currentAudio.src);
+  }
+  app.audioWaitResolve?.();
+  app.audioWaitResolve = null;
+  app.latestAudio = null;
+  ui.play.disabled = true;
+  for (const url of urls) URL.revokeObjectURL(url);
+  updateControls();
+}
+
 async function playQueuedAudio() {
   if (app.playing) return;
   app.playing = true;
-  while (app.audioQueue.length) {
-    const audio = new Audio(app.audioQueue.shift());
+  const generation = app.playbackGeneration;
+  updateControls();
+  while (app.audioQueue.length && generation === app.playbackGeneration) {
+    const url = app.audioQueue.shift();
+    const audio = new Audio(url);
+    app.currentAudio = audio;
     try {
       await audio.play();
-      await new Promise(resolve => { audio.onended = resolve; audio.onerror = resolve; });
+      await new Promise(resolve => { app.audioWaitResolve = resolve; audio.onended = resolve; audio.onerror = resolve; });
     } catch {
-      notice('浏览器限制了自动播放，请点击“播放最近回答”。');
+      if (generation === app.playbackGeneration) notice('浏览器限制了自动播放，请点击“播放最近回答”。');
       break;
+    } finally {
+      app.audioWaitResolve = null;
+      app.currentAudio = null;
+      if (url !== app.latestAudio) URL.revokeObjectURL(url);
     }
   }
   app.playing = false;
+  updateControls();
+  if (app.audioQueue.length) playQueuedAudio();
 }
 
 function handleEvent(event) {
@@ -359,12 +387,42 @@ function handleEvent(event) {
       break;
     case 'asr.final': renderUtterance(data); break;
     case 'agent.state':
+      app.agentState = data.state;
       ui.state.textContent = ({ LISTENING: '正在倾听', ANSWERING: '正在回答', ENDING: '正在整理', ENDED: '已结束' })[data.state] || data.state || '待命';
       if (data.state === 'ENDED') {
         app.active = false;
         app.ending = false;
         app.shouldReconnect = false;
         updateControls();
+      }
+      updateControls();
+      break;
+    case 'agent.step':
+      if (app.traceRequest !== event.request_id) {
+        app.traceRequest = event.request_id;
+        app.evidenceSnippets = [];
+        ui.trace.replaceChildren();
+        ui.sources.replaceChildren();
+      }
+      if (data.status === 'started') {
+        ui.search.textContent = `第 ${data.step} 步：正在查${data.label || '资料'}…`;
+        const item = document.createElement('li');
+        item.dataset.step = String(data.step);
+        item.textContent = `${data.label || '检索'}：进行中`;
+        ui.trace.append(item);
+      }
+      else if (data.status === 'done') {
+        ui.search.textContent = `第 ${data.step} 步：${data.label || '检索'}找到 ${data.count || 0} 条`;
+        const item = [...ui.trace.children].find(node => node.dataset.step === String(data.step));
+        if (item) item.textContent = `${data.label || '检索'}：找到 ${data.count || 0} 条`;
+        if (Array.isArray(data.snippets) && data.snippets.length) {
+          app.evidenceSnippets.push(...data.snippets);
+          renderSources(app.evidenceSnippets);
+        }
+      } else {
+        ui.search.textContent = `第 ${data.step} 步：${data.label || '检索'}失败，继续处理`;
+        const item = [...ui.trace.children].find(node => node.dataset.step === String(data.step));
+        if (item) item.textContent = `${data.label || '检索'}：失败`;
       }
       break;
     case 'search.started': ui.search.textContent = `正在搜索${data.source === 'web' ? '网页' : '本地资料'}…`; break;
@@ -373,7 +431,6 @@ function handleEvent(event) {
       if (app.answerRequest !== event.request_id) {
         app.answerRequest = event.request_id;
         ui.answer.textContent = '';
-        ui.sources.replaceChildren();
       }
       ui.answer.textContent += data.delta || '';
       break;
@@ -382,6 +439,7 @@ function handleEvent(event) {
       ui.search.textContent = '';
       break;
     case 'tts.audio': enqueueAudio(data); break;
+    case 'tts.stop': stopAnswerPlayback(); notice('回答已停止，会议继续收音。'); break;
     case 'minutes.ready': renderMinutes(data); break;
     case 'error': notice(`${data.message || '服务端发生错误'}${data.recoverable === false ? '，请重新开始会议。' : ''}`, true); break;
   }
@@ -416,6 +474,11 @@ ui.play.addEventListener('click', async () => {
     app.audioQueue.push(app.latestAudio);
     await playQueuedAudio();
   }
+});
+ui.stopAnswer.addEventListener('click', () => {
+  stopAnswerPlayback();
+  sendControl('stop_answer');
+  notice('回答已停止，会议继续收音。');
 });
 
 ui.meeting.value = safeGet('xiaohui-last-meeting') || `meeting-${new Date().toISOString().slice(0, 10)}-${Math.random().toString(36).slice(2, 7)}`;

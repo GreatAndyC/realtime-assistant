@@ -22,13 +22,12 @@
 
     <section class="setup panel" aria-label="会议设置">
       <label>会议编号<input id="meeting-id" type="text" maxlength="80" autocomplete="off" spellcheck="false" aria-describedby="meeting-hint"></label>
-      <label>识别语言<select id="language"><option value="zh">普通话</option><option value="yue">粤语</option></select></label>
-      <label>发言人<input id="speaker" type="text" maxlength="40" value="我" autocomplete="name"></label>
+      <label>识别语言<select id="language"><option value="auto">自动识别普通话 / 粤语</option><option value="zh">普通话</option><option value="yue">粤语</option></select></label>
       <div class="setup-actions">
         <button id="start-button" class="button primary">开始收音</button>
         <button id="pause-button" class="button secondary" disabled>暂停收音</button>
       </div>
-      <p id="meeting-hint" class="hint">编号用于保存与恢复同一场会议，可自行修改。</p>
+      <p id="meeting-hint" class="hint">编号用于保存与恢复同一场会议。发言会自动标为“说话人1、说话人2”等；无需填写姓名。</p>
     </section>
 
     <div class="workspace">
@@ -42,9 +41,11 @@
         <section class="panel assistant-panel" aria-labelledby="assistant-title">
           <div class="section-head"><div><span class="section-kicker">ASK XIAOHUI</span><h2 id="assistant-title">助手回答</h2></div><span id="agent-state" class="subtle">待命</span></div>
           <div id="search-status" class="search-status" aria-live="polite"></div>
+          <ol id="agent-trace" class="agent-trace" aria-label="助手执行步骤"></ol>
           <div id="answer" class="answer"><span class="empty">在发言开头说“小会”，即可唤醒助手。</span></div>
           <div id="sources" class="sources"></div>
-          <button id="play-button" class="button text-button" disabled>播放最近回答</button>
+          <div class="answer-actions"><button id="play-button" class="button text-button" disabled>播放最近回答</button><button id="stop-answer-button" class="button secondary" disabled>停止回答</button></div>
+          <p class="hint">助手朗读时也可以说“小慧暂停”。</p>
         </section>
 
         <section class="panel minutes-panel" aria-labelledby="minutes-title">

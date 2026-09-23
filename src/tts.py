@@ -15,7 +15,12 @@ async def _run(*args: str) -> tuple[int, bytes, bytes]:
             *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     except FileNotFoundError as exc:
         raise TtsError(f"缺少语音工具：{args[0]}") from exc
-    stdout, stderr = await process.communicate()
+    try:
+        stdout, stderr = await process.communicate()
+    except asyncio.CancelledError:
+        process.kill()
+        await process.communicate()
+        raise
     return process.returncode or 0, stdout, stderr
 
 

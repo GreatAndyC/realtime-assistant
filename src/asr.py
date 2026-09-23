@@ -41,7 +41,7 @@ class EnergyVAD:
         self._active = bytearray()
         self._meeting_id: Optional[str] = None
         self._speaker = ""
-        self._language = Language.ZH
+        self._language = Language.AUTO
         self._seq_start = 0
         self._seq_end = 0
         self._speech_samples = 0
@@ -188,6 +188,13 @@ class WhisperASR:
         if not segment.pcm_bytes:
             return ""
         loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._executor, self._transcribe_partial_sync, segment)
+
+    async def transcribe_with_language(self, segment: AudioSegment) -> tuple[str, Language]:
+        """Recognize speech and return the language used for this segment."""
+        if not segment.pcm_bytes:
+            return "", Language.ZH
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._executor, self._transcribe_sync, segment)
 
     def _load_model(self):
@@ -202,10 +209,32 @@ class WhisperASR:
             self._model = Model(str(model_file), print_realtime=False, print_progress=False)
         return self._model
 
-    def _transcribe_sync(self, segment: AudioSegment) -> str:
+    def _transcribe_sync(self, segment: AudioSegment) -> tuple[str, Language]:
         model = self._load_model()
         samples = np.frombuffer(segment.pcm_bytes, dtype="<i2").astype(np.float32) / 32768.0
-        parts = model.transcribe(samples, language=segment.language.value, no_context=True)
+        if segment.language != Language.AUTO:
+            parts = model.transcribe(samples, language=segment.language.value, no_context=True)
+            return "".join(part.text for part in parts).strip(), segment.language
+
+        # Whisper's language detector often labels Cantonese as zh. Decode both
+        # supported languages and compare the resulting token confidence.
+        candidates = []
+        for language in (Language.ZH, Language.YUE):
+            parts = model.transcribe(samples, language=language.value,
+                                     no_context=True, extract_probability=True)
+            text = "".join(part.text for part in parts).strip()
+            weight = sum(len(part.text.strip()) for part in parts)
+            confidence = (sum(float(part.probability or 0) * len(part.text.strip())
+                              for part in parts) / weight) if weight else 0.0
+            candidates.append((confidence, text, language))
+        _, text, language = max(candidates, key=lambda item: item[0])
+        return text, language
+
+    def _transcribe_partial_sync(self, segment: AudioSegment) -> str:
+        model = self._load_model()
+        samples = np.frombuffer(segment.pcm_bytes, dtype="<i2").astype(np.float32) / 32768.0
+        language = "" if segment.language == Language.AUTO else segment.language.value
+        parts = model.transcribe(samples, language=language, no_context=True)
         return "".join(part.text for part in parts).strip()
 
 

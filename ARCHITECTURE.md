@@ -19,15 +19,15 @@
 | 粤语 ASR 备选 | [SenseVoiceSmall](https://github.com/QwenAudio/SenseVoice) | 官方模型支持普通话和粤语，单段输入不超过 30 秒；它是**分段识别**模型。适合输出高质量最终字幕。 |
 | 原生在线 ASR 备选 | [FunASR Paraformer-zh-streaming](https://github.com/modelscope/FunASR)（普通话）+ SenseVoiceSmall（粤语终稿） | FunASR 官方区分流式 Paraformer 和多语言 SenseVoiceSmall。不能只装 SenseVoiceSmall 就声称普通话、粤语都原生流式；两套模型也增加首小时安装风险。 |
 | VAD | 首版简单能量阈值 + 最长片段截断；可替换为 [Silero VAD](https://github.com/snakers4/silero-vad) | Silero 提供有状态的实时 `VADIterator`，更适合嘈杂会议。首版阈值法要标注安静发言可能漏切段。 |
-| LLM | `httpx` 调 OpenAI 兼容 Chat Completions，解析 SSE；默认配置 `deepseek-flash` | DeepSeek [当前 API 文档](https://api-docs.deepseek.com/)推荐模型名 `deepseek-flash`，支持 `stream=true`。`deepseek-v4-flash` 已是兼容旧名，应避免写进新配置。Agent 决策由本项目代码实现。当前机器未发现可用 LLM 密钥，真实模型链路须在提供密钥后测试。 |
+| LLM | `httpx` 调 OpenAI 兼容 Chat Completions，工具选择使用非流式请求，最终回答解析 SSE；默认配置 `deepseek-flash` | DeepSeek [API 文档](https://api-docs.deepseek.com/)提供工具调用和 `stream=true`。Agent 的工具白名单、三次调用上限和检索结果处理由本项目代码实现；当前机器已完成真实模型工具选择与回答验证。 |
 | 本地文档 | Markdown/TXT 直接分段；PDF 用 [pypdf](https://github.com/py-pdf/pypdf/blob/main/docs/user/extract-text.md) 抽取文本 | 小知识库用中文双字 + 英文词项评分即可，保留页码与来源。pypdf 不负责扫描 PDF 的 OCR。首小时无需向量数据库。 |
-| 网络搜索 | [ddgs](https://github.com/deedy5/ddgs) 文本元搜索，维基百科 API 备用 | ddgs 无需密钥、返回标题/URL/摘要，但依赖第三方搜索上游；必须设超时、错误回传，不能在 WebSocket 收音协程里等待。 |
+| 网络搜索 | [ddgs](https://github.com/deedy5/ddgs) 文本元搜索 | ddgs 无需密钥、返回标题/URL/摘要，但依赖第三方搜索上游；调用设超时，失败时返回错误结果供 Agent 继续处理。 |
 | TTS | 本机 macOS `say` + FFmpeg 输出 MP3；跨平台可用 [edge-tts](https://github.com/rany2/edge-tts) | `say` 可用普通话和粤语系统声音。edge-tts 支持音频流及 `zh-HK` 声音，但依赖在线服务。 |
-| 说话人 | 首版客户端手动设置发言人标签；后续可加 [pyannote.audio](https://github.com/pyannote/pyannote-audio) | 自动 diarization 是额外的模型、聚类和时序对齐工程；不能把手动标签冒充自动分离。 |
+| 说话人 | 当前实现采用本地 [Resemblyzer](https://github.com/resemble-ai/resemblyzer) 声纹嵌入，按完成的语音片段聚类并标为“说话人1/2”等 | 无需姓名录入，但无法识别真实姓名，也不能可靠处理同一片段中的重叠发言；短发言和相似声线可能误分。 |
 
 **暂不采用**：[LiveKit Agents](https://github.com/livekit/agents)已经封装 STT、LLM、TTS、AgentSession 和工具调用；直接使用会把题目要求自己实现的核心流程变成框架配置。LiveKit 传输层以后可用于远程多端会议，但单机笔试不需要。LangChain 也不作为 Agent 控制层，唤醒门控与检索决策应当在项目源码中清晰可见。
 
-最小 Python 依赖预计为 `fastapi`、`uvicorn`、`pywhispercpp`、`numpy`、`httpx`、`pypdf`、`ddgs`；测试加 `pytest`、`websockets`。`sqlite3` 属于 Python 标准库；TTS 需要本机 `say` 和 FFmpeg。`silero-vad`、`edge-tts`、`pyannote.audio` 均为可选升级，不应拖慢首轮交付。实际锁定版本要在实现后按运行环境验证。
+当前依赖见 [requirements.txt](requirements.txt)，其中 `resemblyzer` 用于匿名说话人标记。`sqlite3` 属于 Python 标准库；TTS 需要本机 `say` 和 FFmpeg。`silero-vad`、`edge-tts`、`pyannote.audio` 均未接入。
 
 ### 需要申请哪些 API？
 
@@ -55,11 +55,12 @@ flowchart LR
   ASR --> DB[(SQLite 全量转写)]
   DB --> WAKE{句首唤醒?}
   WAKE -- 否 --> LISTEN[继续监听]
-  WAKE -- 是 --> CTX[阶段摘要 + 最近发言]
-  CTX --> LOCAL[本地文档/历史会议检索]
-  LOCAL -->|证据不足| WEB[网络搜索]
-  LOCAL --> LLM[流式 LLM]
-  WEB --> LLM
+  WAKE -- 是 --> TOOL[模型选择检索工具，最多三次]
+  TOOL -->|按问题选择| LOCAL[会议记录/本地文档]
+  TOOL -->|按问题选择| WEB[网络搜索]
+  LOCAL --> TOOL
+  WEB --> TOOL
+  TOOL --> LLM[结合证据流式回答]
   LLM --> TTS[TTS 音频]
   TTS --> PLAY[浏览器播放]
   LLM --> LISTEN
@@ -67,16 +68,16 @@ flowchart LR
   MAP --> REDUCE[阶段/最终结构化纪要]
 ```
 
-建议模块：`client` 负责收音和播放；`session` 负责会议状态、音频序号和任务；`asr` 负责切段与转写；`agent` 负责唤醒、上下文和工具路由；`search` 负责文档和网络检索；`minutes` 负责分段抽取与层级合并；`storage` 负责音频、转写、摘要和纪要持久化。各模块通过明确接口通信，第三方模型可以替换。
+当前模块：`client` 负责收音和播放；`server` 负责会议状态、音频序号和任务；`asr` 负责切段与转写；`speakers` 标记匿名说话人；`agent` 负责唤醒和回答上下文；`tool_agent` 负责工具选择与执行；`search` 负责文档和网络检索；`minutes` 负责分段抽取与层级合并；`storage` 负责持久化。
 
 ASR 工作进程启动时加载模型一次，再依次处理片段；不要每 4 秒启动一次 `whisper-cli`，否则重复加载约 1.5 GB 权重会破坏实时性。识别在工作线程或独立进程内运行，WebSocket 读循环只做校验、写盘和入队。模型兼容性、普通话/粤语效果及实际延迟仍需用样音测量。
 
 ### 协议草案
 
-- `WS /ws/meetings/{meeting_id}`。建立连接后先发 `config`：`{"type":"config","language":"zh|yue","speaker":"王明","resume_from":123}`。
+- `WS /ws/meetings/{meeting_id}`。建立连接后先发 `config`：`{"type":"config","language":"auto","resume_from":123}`；也可手动指定 `zh` 或 `yue`。
 - 音频帧为二进制 PCM16 little-endian、单声道、16 kHz。可靠版本增加 `seq:uint32 + sample_offset:uint64 + pcm`；服务端按 `(meeting_id, seq)` 幂等接收并发 `ack`。首小时若时间紧，先实现单连接顺序帧、断线重连后的 `sample_offset` 校验。
-- 服务端事件：`asr.partial`、`asr.final`、`agent.state`、`search.started`、`search.result`、`llm.delta`、`llm.done`、`tts.audio`、`minutes.ready`、`error`。所有事件附 `meeting_id`、`utterance_id` 或 `request_id`，便于重连去重。
-- 控制消息：`flush`、`partial_minutes`、`end_meeting`。结束前必须 flush 音频片段，等待已入队 ASR 完成，再生成最终纪要。
+- 服务端事件：`asr.partial`、`asr.final`、`agent.state`、`agent.step`、`search.result`、`llm.delta`、`llm.done`、`tts.audio`、`tts.stop`、`minutes.ready`、`error`、`ack`。事件附 `meeting_id`，回答事件带 `request_id`。
+- 控制消息：`flush`、`partial_minutes`、`stop_answer`、`end_meeting`。结束前 flush 音频片段，等待已入队 ASR 完成，再生成最终纪要。
 
 ### Agent 状态机
 

@@ -87,7 +87,7 @@ class Config:
     # ------------------------------------------------------------------
     # 服务
     # ------------------------------------------------------------------
-    host: str = field(default_factory=lambda: os.environ.get("HOST", "0.0.0.0"))
+    host: str = field(default_factory=lambda: os.environ.get("HOST", "127.0.0.1"))
     port: int = field(default_factory=lambda: int(os.environ.get("PORT", "8000")))
     log_level: str = "info"
 
