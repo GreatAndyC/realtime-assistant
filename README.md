@@ -34,6 +34,6 @@ test -f .env || cp .env.example .env
 
 ## 验证与限制
 
-运行 `.venv/bin/python -m pytest -q` 可验证音频帧顺序、重复帧、WebSocket 转写到最终纪要的流程；自动化测试使用模拟 ASR。本机另以合成普通话和粤语分别完成真实 Whisper 转写，并以合成普通话跑通 WebSocket 收音、转写、入库和最终纪要；这不代表真人语音识别质量。当前 VAD 是能量阈值法，安静发言或嘈杂环境可能漏检。Whisper 字幕是分段和周期快照，不是原生逐帧流式解码。PDF 不做扫描件 OCR，网页搜索依赖外部搜索服务。
+运行 `.venv/bin/python -m pytest -q` 可验证音频帧顺序、重复帧、WebSocket 转写到最终纪要的流程；自动化测试使用模拟 ASR。本机另以合成普通话和粤语分别完成真实 Whisper 转写，并以两段合成普通话跑通 WebSocket 收音、转写、入库、句首唤醒、联网检索、真实 DeepSeek 流式回答、MP3 播放事件和最终纪要；这不代表真人语音识别质量。当前 VAD 是能量阈值法，安静发言或嘈杂环境可能漏检。Whisper 字幕是分段和周期快照，不是原生逐帧流式解码。PDF 不做扫描件 OCR，网页搜索依赖外部搜索服务。
 
 架构取舍和验收方案见 [ARCHITECTURE.md](ARCHITECTURE.md)。
