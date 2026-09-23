@@ -21,7 +21,7 @@ class Config:
         default_factory=lambda: os.environ.get("LLM_BASE_URL", "https://api.deepseek.com")
     )
     llm_model: str = field(
-        default_factory=lambda: os.environ.get("LLM_MODEL", "deepseek-chat")
+        default_factory=lambda: os.environ.get("LLM_MODEL", "deepseek-flash")
     )
     llm_timeout: float = 30.0
 

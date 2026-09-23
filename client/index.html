@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#121d2b">
+  <title>小会 · 实时会议助手</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">✦</span><span>小会 <small>实时会议助手</small></span></div>
+      <span id="connection-pill" class="pill" aria-live="polite">未连接</span>
+    </header>
+
+    <section class="hero" aria-labelledby="page-title">
+      <div class="eyebrow">MEETING COMPANION</div>
+      <h1 id="page-title">让讨论有记录，<br><em>让决定有下文。</em></h1>
+      <p>实时转写普通话或粤语。说“<strong>小会，……</strong>”即可提问；结束后自动整理讨论、决定与待办。</p>
+    </section>
+
+    <section class="setup panel" aria-label="会议设置">
+      <label>会议编号<input id="meeting-id" type="text" maxlength="80" autocomplete="off" spellcheck="false" aria-describedby="meeting-hint"></label>
+      <label>识别语言<select id="language"><option value="zh">普通话</option><option value="yue">粤语</option></select></label>
+      <label>发言人<input id="speaker" type="text" maxlength="40" value="我" autocomplete="name"></label>
+      <div class="setup-actions">
+        <button id="start-button" class="button primary">开始收音</button>
+        <button id="pause-button" class="button secondary" disabled>暂停收音</button>
+      </div>
+      <p id="meeting-hint" class="hint">编号用于保存与恢复同一场会议，可自行修改。</p>
+    </section>
+
+    <div class="workspace">
+      <section class="panel transcript-panel" aria-labelledby="transcript-title">
+        <div class="section-head"><div><span class="section-kicker">LIVE TRANSCRIPT</span><h2 id="transcript-title">实时字幕</h2></div><span id="mic-indicator" class="mic-indicator">麦克风关闭</span></div>
+        <div id="transcript" class="transcript" role="log" aria-live="polite" aria-relevant="additions text"><div class="empty">开始收音后，这里会出现会议发言。</div></div>
+        <div id="partial" class="partial" hidden></div>
+      </section>
+
+      <aside class="side-column">
+        <section class="panel assistant-panel" aria-labelledby="assistant-title">
+          <div class="section-head"><div><span class="section-kicker">ASK XIAOHUI</span><h2 id="assistant-title">助手回答</h2></div><span id="agent-state" class="subtle">待命</span></div>
+          <div id="search-status" class="search-status" aria-live="polite"></div>
+          <div id="answer" class="answer"><span class="empty">在发言开头说“小会”，即可唤醒助手。</span></div>
+          <div id="sources" class="sources"></div>
+          <button id="play-button" class="button text-button" disabled>播放最近回答</button>
+        </section>
+
+        <section class="panel minutes-panel" aria-labelledby="minutes-title">
+          <div class="section-head"><div><span class="section-kicker">MEETING NOTES</span><h2 id="minutes-title">会议纪要</h2></div><span id="minutes-phase" class="subtle">尚未生成</span></div>
+          <div class="minutes-actions"><button id="flush-button" class="button secondary" disabled>整理当前发言</button><button id="minutes-button" class="button secondary" disabled>生成阶段纪要</button><button id="end-button" class="button danger" disabled>结束并生成最终纪要</button></div>
+          <div id="minutes" class="minutes"><p class="empty">会议进行中可随时生成阶段纪要。</p></div>
+        </section>
+      </aside>
+    </div>
+    <p id="notice" class="notice" role="status" aria-live="polite"></p>
+  </main>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

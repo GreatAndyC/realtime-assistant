@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from enum import Enum
 from typing import Any, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 # ---------------------------------------------------------------------------
@@ -200,5 +200,4 @@ class AudioSegment(BaseModel):
     seq_end: int
     pcm_bytes: bytes  # 16kHz / 16-bit / 单声道
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
