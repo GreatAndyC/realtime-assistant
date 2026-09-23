@@ -12,6 +12,22 @@ from src.storage import Storage
 from src.volcengine_asr import TranscriptEvent
 
 
+def test_meeting_requires_cloud_asr_key_before_creating_record(monkeypatch, tmp_path):
+    import src.server as server
+
+    store = Storage(tmp_path / "meetings.db", tmp_path)
+    monkeypatch.setattr(server, "storage", store)
+    monkeypatch.setattr(server.config, "volc_api_key", "")
+    with TestClient(app) as client:
+        assert client.get("/health").json()["asr_configured"] is False
+        with client.websocket_connect("/ws/meetings/no-key") as ws:
+            ws.send_json({"type": "config", "language": "auto"})
+            event = ws.receive_json()
+            assert event["type"] == "error"
+            assert "VOLC_API_KEY" in event["data"]["message"]
+    assert store.get_meeting("no-key") is None
+
+
 def test_volcengine_stream_reuses_meeting_pipeline(monkeypatch, tmp_path):
     import src.server as server
     import src.volcengine_asr as volcengine_asr
@@ -50,7 +66,6 @@ def test_volcengine_stream_reuses_meeting_pipeline(monkeypatch, tmp_path):
         async def close(self):
             self.closed = True
 
-    monkeypatch.setattr(server.config, "asr_provider", "volcengine")
     monkeypatch.setattr(server.config, "volc_api_key", "test-key")
     monkeypatch.setattr(volcengine_asr, "VolcengineASRClient", FakeVolcengine)
     store = Storage(tmp_path / "meetings.db", tmp_path)
@@ -94,7 +109,6 @@ def test_cloud_asr_replays_persisted_audio_after_browser_reconnect(monkeypatch, 
     for seq in range(20):
         store.append_audio("replay-test", seq, seq * 320, b"\x00\x01" * 320)
     monkeypatch.setattr(server, "storage", store)
-    monkeypatch.setattr(server.config, "asr_provider", "volcengine")
     monkeypatch.setattr(server.config, "volc_api_key", "test-key")
     sent = []
 

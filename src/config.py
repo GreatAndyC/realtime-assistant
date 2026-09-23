@@ -26,36 +26,14 @@ class Config:
     llm_timeout: float = 30.0
 
     # ------------------------------------------------------------------
-    # ASR（pywhispercpp，指向本机 GGML 权重）
+    # 火山引擎豆包实时流式 ASR
     # ------------------------------------------------------------------
-    whisper_model_path: str = field(
-        default_factory=lambda: os.environ.get("WHISPER_MODEL_PATH", "")
-    )
-    whisper_language: str = "zh"   # 默认普通话；粤语传 "yue"
-    asr_provider: str = field(
-        default_factory=lambda: os.environ.get("ASR_PROVIDER", "whisper").lower()
-    )
     volc_api_key: str = field(
         default_factory=lambda: os.environ.get("VOLC_API_KEY", "")
     )
     volc_resource_id: str = field(
         default_factory=lambda: os.environ.get("VOLC_RESOURCE_ID", "volc.seedasr.sauc.duration")
     )
-
-    # ------------------------------------------------------------------
-    # VAD 参数
-    # ------------------------------------------------------------------
-    vad_energy_threshold: float = 0.01    # RMS 能量阈值（相对于满幅）
-    vad_silence_ms: int = 500             # 静音多久视为切段
-    vad_max_segment_ms: int = 28000       # 单段最长（Whisper 30s 窗口留余量）
-    vad_min_segment_ms: int = 300         # 太短的片段丢弃
-
-    # ------------------------------------------------------------------
-    # 音频格式（固定，前端与服务端必须一致）
-    # ------------------------------------------------------------------
-    sample_rate: int = 16000
-    channels: int = 1
-    sample_width: int = 2  # 16-bit PCM
 
     # ------------------------------------------------------------------
     # 存储路径

@@ -1,33 +1,70 @@
-"""Automatic language selection runs for each utterance, not each meeting."""
-import numpy as np
+"""Cloud ASR language detection is applied to each finalized utterance."""
+from __future__ import annotations
 
-from src.asr import WhisperASR
-from src.models import AudioSegment, Language
+import asyncio
+import struct
 
+from fastapi.testclient import TestClient
 
-class FakeModel:
-    def __init__(self):
-        self.decoded_languages = []
-
-    def transcribe(self, samples, *, language, no_context, extract_probability=False):
-        self.decoded_languages.append(language)
-        preferred = "zh" if samples[0] > 0 else "yue"
-        probability = 0.9 if language == preferred else 0.6
-        return [type("Part", (), {"text": "测试", "probability": probability})()]
+from src.server import app
+from src.storage import Storage
+from src.volcengine_asr import TranscriptEvent
 
 
-def test_auto_language_is_selected_for_each_segment(monkeypatch):
-    asr = WhisperASR()
-    model = FakeModel()
-    monkeypatch.setattr(asr, "_load_model", lambda: model)
-    try:
-        for sample, expected in ((10000, Language.ZH), (-10000, Language.YUE)):
-            segment = AudioSegment(
-                meeting_id="meeting", speaker="测试员", language=Language.AUTO,
-                seq_start=0, seq_end=0,
-                pcm_bytes=np.array([sample] * 16000, dtype="<i2").tobytes(),
-            )
-            assert asr._transcribe_sync(segment) == ("测试", expected)
-        assert model.decoded_languages == ["zh", "yue", "zh", "yue"]
-    finally:
-        asr._executor.shutdown(wait=True)
+def test_auto_language_is_selected_for_each_cloud_utterance(monkeypatch, tmp_path):
+    import src.server as server
+    import src.volcengine_asr as volcengine_asr
+
+    store = Storage(tmp_path / "meetings.db", tmp_path)
+    monkeypatch.setattr(server, "storage", store)
+    monkeypatch.setattr(server.config, "volc_api_key", "test-key")
+
+    class FakeVolcengine:
+        def __init__(self, api_key, resource_id):
+            self.responses = asyncio.Queue()
+            self.frames = 0
+
+        async def connect(self):
+            pass
+
+        async def send_pcm(self, pcm):
+            self.frames += 1
+            if self.frames in (20, 40):
+                await self.responses.put(TranscriptEvent(
+                    "普通话" if self.frames == 20 else "廣東話", True,
+                    speaker_id="A", language="zh" if self.frames == 20 else "yue",
+                    end_ms=self.frames * 20,
+                ))
+
+        async def finish(self):
+            await self.responses.put(None)
+
+        async def events(self):
+            while (event := await self.responses.get()) is not None:
+                yield event
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(volcengine_asr, "VolcengineASRClient", FakeVolcengine)
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/meetings/language-test") as ws:
+            ws.send_json({"type": "config", "language": "auto"})
+            for seq in range(40):
+                ws.send_bytes(struct.pack("<IQ", seq, seq * 320) + b"\x00\x00" * 320)
+            ws.send_json({"type": "flush"})
+            finals = []
+            while len(finals) < 2:
+                event = ws.receive_json()
+                if event["type"] == "asr.final":
+                    finals.append(event["data"])
+            ws.send_json({"type": "end_meeting"})
+            while (event := ws.receive_json())["type"] != "agent.state" or event["data"]["state"] != "ENDED":
+                pass
+
+    assert [(item["text"], item["language"], item["seq"]) for item in finals] == [
+        ("普通话", "zh", 19), ("廣東話", "yue", 39),
+    ]
+    assert [(u.text, u.language.value) for u in store.list_utterances("language-test")] == [
+        ("普通话", "zh"), ("廣東話", "yue"),
+    ]

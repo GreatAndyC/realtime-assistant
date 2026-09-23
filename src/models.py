@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from enum import Enum
 from typing import Any, Optional
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
 
 # ---------------------------------------------------------------------------
@@ -189,19 +189,3 @@ class Meeting(BaseModel):
     started_at_ms: int
     ended_at_ms: Optional[int] = None
     state: AgentState = AgentState.LISTENING
-
-
-# ---------------------------------------------------------------------------
-# ASR 内部队列消息
-# ---------------------------------------------------------------------------
-
-class AudioSegment(BaseModel):
-    """VAD 切出的一段语音，放入 ASR 队列"""
-    meeting_id: str
-    speaker: str
-    language: Language
-    seq_start: int
-    seq_end: int
-    pcm_bytes: bytes  # 16kHz / 16-bit / 单声道
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)

@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import config
-from .models import AgentState, AudioSegment, ConfigMessage, ControlType, Language, Utterance, WSEventType
+from .models import AgentState, ConfigMessage, ControlType, Language, Utterance, WSEventType
 from .storage import Storage
 
 
@@ -40,9 +40,7 @@ async def home():
 
 @app.get("/health")
 async def health():
-    asr_ready = (bool(config.volc_api_key) if config.asr_provider == "volcengine"
-                 else bool(config.whisper_model_path))
-    return {"ok": True, "asr_provider": config.asr_provider, "asr_configured": asr_ready,
+    return {"ok": True, "asr_provider": "volcengine", "asr_configured": bool(config.volc_api_key),
             "llm_configured": bool(config.deepseek_api_key)}
 
 
@@ -61,32 +59,19 @@ async def meeting_detail(meeting_id: str):
 
 class MeetingSession:
     def __init__(self, ws: WebSocket, meeting_id: str, settings: ConfigMessage):
-        from .asr import EnergyVAD, get_asr
-        from .speakers import SpeakerDiarizer
-
-        if config.asr_provider not in {"whisper", "volcengine"}:
-            raise ValueError(f"Unsupported ASR_PROVIDER: {config.asr_provider}")
-        if config.asr_provider == "volcengine" and not config.volc_api_key:
-            raise ValueError("VOLC_API_KEY is required when ASR_PROVIDER=volcengine")
+        if not config.volc_api_key:
+            raise ValueError("VOLC_API_KEY is required for speech recognition")
         self.ws = ws
         self.meeting_id = meeting_id
         self.settings = settings
-        self.cloud_asr = config.asr_provider == "volcengine"
-        self.vad = None if self.cloud_asr else EnergyVAD()
-        self.asr = None if self.cloud_asr else get_asr()
         prior_labels = (re.fullmatch(r"说话人(\d+)", item.speaker)
                         for item in storage.list_utterances(meeting_id))
         last_index = max((int(match.group(1)) for match in prior_labels if match), default=0)
-        self.speakers = None if self.cloud_asr else SpeakerDiarizer(start_index=last_index)
         self.speaker_labels: dict[str, str] = {}
         self.next_speaker_index = last_index
-        self.queue: asyncio.Queue[AudioSegment] | None = (None if self.cloud_asr
-                                                           else asyncio.Queue(maxsize=32))
         self.send_lock = asyncio.Lock()
         self.answer_task: asyncio.Task | None = None
-        self.partial_task: asyncio.Task | None = None
         self.minutes_tasks: set[asyncio.Task] = set()
-        self.worker = None if self.cloud_asr else asyncio.create_task(self._asr_worker())
         self.volc = None
         self.volc_reader: asyncio.Task | None = None
         self.volc_finishing = False
@@ -95,16 +80,15 @@ class MeetingSession:
         self.volc_pending_start: int | None = None
         self.volc_session_start = 0
         self.volc_last_seq = storage.audio_position(meeting_id)[0]
-        if self.cloud_asr:
-            checkpoint = storage.cloud_asr_checkpoint(meeting_id)
-            if checkpoint == 0 and storage.count_utterances(meeting_id):
-                # A meeting previously recognized by Whisper has no cloud
-                # checkpoint; do not transcribe its whole history again.
-                checkpoint = storage.audio_position(meeting_id)[1]
-                storage.set_cloud_asr_checkpoint(meeting_id, checkpoint)
-            self.volc_pending = bytearray(storage.read_audio_since(meeting_id, checkpoint))
-            if self.volc_pending:
-                self.volc_pending_start = checkpoint
+        checkpoint = storage.cloud_asr_checkpoint(meeting_id)
+        if checkpoint == 0 and storage.count_utterances(meeting_id):
+            # Historical meetings recognized by the removed local backend have
+            # no cloud checkpoint; do not transcribe their full history again.
+            checkpoint = storage.audio_position(meeting_id)[1]
+            storage.set_cloud_asr_checkpoint(meeting_id, checkpoint)
+        self.volc_pending = bytearray(storage.read_audio_since(meeting_id, checkpoint))
+        if self.volc_pending:
+            self.volc_pending_start = checkpoint
         self.state = AgentState.LISTENING
         self.ending = False
 
@@ -148,42 +132,18 @@ class MeetingSession:
         await self.send(WSEventType.ACK, {"seq": seq})
         if not fresh:
             return
-        if self.cloud_asr:
-            if self.volc_pending_start is None:
-                self.volc_pending_start = offset
-            self.volc_pending.extend(pcm)
-            self.volc_last_seq = seq
-            try:
-                await self._send_volc(pcm)
-            except Exception as exc:
-                log.exception("Volcengine ASR send failed")
-                await self.error("ASR_FAILED", f"火山语音连接失败：{exc}")
-            return
-        for segment in self.vad.push(pcm, self.meeting_id, "识别中",
-                                     self.settings.language, seq):
-            await self.queue.put(segment)
-        if self.vad.partial_due() and (self.partial_task is None or self.partial_task.done()):
-            snapshot = self.vad.partial_snapshot()
-            if snapshot is not None:
-                self.partial_task = asyncio.create_task(self._partial(snapshot))
-
-    async def _partial(self, snapshot: AudioSegment):
+        if self.volc_pending_start is None:
+            self.volc_pending_start = offset
+        self.volc_pending.extend(pcm)
+        self.volc_last_seq = seq
         try:
-            text = await self.asr.transcribe(snapshot)
-            if text.strip():
-                await self.send(WSEventType.ASR_PARTIAL,
-                                {"text": text.strip(), "speaker": snapshot.speaker,
-                                 "seq": snapshot.seq_end})
+            await self._send_volc(pcm)
         except Exception as exc:
-            log.warning("Partial ASR failed: %s", exc)
+            log.exception("Volcengine ASR send failed")
+            await self.error("ASR_FAILED", f"火山语音连接失败：{exc}")
 
     async def flush(self):
-        if self.cloud_asr:
-            await self._flush_volc()
-            return
-        for segment in self.vad.flush():
-            await self.queue.put(segment)
-        await self.queue.join()
+        await self._flush_volc()
 
     async def _open_volc(self):
         """Open a provider session and replay audio since the last confirmed sentence."""
@@ -221,7 +181,7 @@ class MeetingSession:
             await self._open_volc()
 
     async def resume_asr(self):
-        if self.cloud_asr and self.volc_pending:
+        if self.volc_pending:
             try:
                 await self._open_volc()
             except Exception as exc:
@@ -332,39 +292,6 @@ class MeetingSession:
             self.volc_reader = None
             self.volc_finishing = False
 
-    async def _asr_worker(self):
-        while True:
-            segment = await self.queue.get()
-            try:
-                text, language = await self.asr.transcribe_with_language(segment)
-                text = text.strip()
-                if text:
-                    try:
-                        speaker = await self.speakers.identify(segment.pcm_bytes)
-                    except Exception as exc:
-                        log.exception("Speaker classification failed")
-                        speaker = "待确认发言人"
-                        await self.error("SPEAKER_FAILED", str(exc))
-                    utterance = Utterance(
-                        utterance_id=uuid.uuid4().hex, meeting_id=self.meeting_id,
-                        speaker=speaker, language=language, text=text,
-                        timestamp_ms=int(time.time() * 1000), seq=segment.seq_end,
-                    )
-                    storage.save_utterance(utterance)
-                    await self.send(WSEventType.ASR_FINAL,
-                                    {"utterance_id": utterance.utterance_id, "text": text,
-                                     "speaker": utterance.speaker, "language": utterance.language.value,
-                                     "seq": utterance.seq, "timestamp_ms": utterance.timestamp_ms},
-                                    utterance_id=utterance.utterance_id)
-                    await self._handle_utterance(text, language)
-                    self._maybe_checkpoint()
-            except Exception as exc:
-                log.exception("ASR segment failed")
-                with suppress(Exception):
-                    await self.error("ASR_FAILED", str(exc))
-            finally:
-                self.queue.task_done()
-
     async def _handle_utterance(self, text: str, language: Language):
         from .agent import extract_wake_query, is_stop_command
 
@@ -468,21 +395,16 @@ class MeetingSession:
         await self.set_state(AgentState.ENDED)
 
     async def close(self):
-        for task in (self.answer_task, self.partial_task):
-            if task and not task.done():
-                task.cancel()
-                with suppress(asyncio.CancelledError, Exception):
-                    await task
+        if self.answer_task and not self.answer_task.done():
+            self.answer_task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await self.answer_task
         if self.volc_reader and not self.volc_reader.done():
             self.volc_reader.cancel()
             with suppress(asyncio.CancelledError):
                 await self.volc_reader
         if self.volc is not None:
             await self.volc.close()
-        if self.worker is not None and not self.worker.done():
-            self.worker.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.worker
 
 
 @app.websocket("/ws/meetings/{meeting_id}")
@@ -500,6 +422,8 @@ async def meeting_socket(ws: WebSocket, meeting_id: str):
         settings = ConfigMessage.model_validate(first)
         if first.get("type") != ControlType.CONFIG.value:
             raise ValueError("First message must be config")
+        if not config.volc_api_key:
+            raise ValueError("VOLC_API_KEY is required for speech recognition")
         storage.create_or_resume(meeting_id, settings.language, settings.speaker[:100])
         session = MeetingSession(ws, meeting_id, settings)
         _active[meeting_id] = session
