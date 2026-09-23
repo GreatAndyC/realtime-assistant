@@ -47,6 +47,18 @@ class Storage:
                 created_at_ms INTEGER NOT NULL, payload TEXT NOT NULL,
                 PRIMARY KEY(meeting_id, phase)
             );
+            CREATE TABLE IF NOT EXISTS cloud_asr_checkpoints (
+                meeting_id TEXT PRIMARY KEY REFERENCES meetings(meeting_id),
+                sample_offset INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS audio_frames (
+                meeting_id TEXT NOT NULL REFERENCES meetings(meeting_id),
+                seq INTEGER NOT NULL, start_sample INTEGER NOT NULL,
+                end_sample INTEGER NOT NULL, received_at_ms INTEGER NOT NULL,
+                PRIMARY KEY(meeting_id, seq)
+            );
+            CREATE INDEX IF NOT EXISTS audio_frames_meeting_end
+                ON audio_frames(meeting_id, end_sample);
         """)
         self._conn.commit()
 
@@ -125,8 +137,24 @@ class Storage:
                 "UPDATE meetings SET last_seq=?, next_sample_offset=? WHERE meeting_id=?",
                 (seq, sample_offset + len(pcm) // 2, meeting_id),
             )
+            self._conn.execute(
+                "INSERT INTO audio_frames VALUES(?,?,?,?,?)",
+                (meeting_id, seq, sample_offset, sample_offset + len(pcm) // 2,
+                 int(time.time() * 1000)),
+            )
             self._conn.commit()
             return True
+
+    def audio_frame_at(self, meeting_id: str, end_sample: int) -> tuple[int, int] | None:
+        """Return the sequence and capture time for a recognized sample offset."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT seq, received_at_ms FROM audio_frames "
+                "WHERE meeting_id=? AND start_sample<? AND end_sample>=? "
+                "ORDER BY end_sample LIMIT 1",
+                (meeting_id, end_sample, end_sample),
+            ).fetchone()
+            return (row[0], row[1]) if row else None
 
     def save_utterance(self, utterance: Utterance) -> None:
         with self._lock:
@@ -134,6 +162,65 @@ class Storage:
                 "INSERT OR IGNORE INTO utterances VALUES(?,?,?,?,?,?,?)",
                 (utterance.utterance_id, utterance.meeting_id, utterance.speaker,
                  utterance.language.value, utterance.text, utterance.timestamp_ms, utterance.seq),
+            )
+            self._conn.commit()
+
+    def cloud_asr_checkpoint(self, meeting_id: str) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT sample_offset FROM cloud_asr_checkpoints WHERE meeting_id=?", (meeting_id,)
+            ).fetchone()
+            return row[0] if row else 0
+
+    def read_audio_since(self, meeting_id: str, sample_offset: int) -> bytes:
+        """Read persisted PCM that has not yet been finalized by cloud ASR."""
+        self.validate_id(meeting_id)
+        with self._lock:
+            _, end_offset = self.audio_position(meeting_id)
+            if not 0 <= sample_offset <= end_offset:
+                raise ValueError("invalid ASR checkpoint")
+            if sample_offset == end_offset:
+                return b""
+            audio_path = self.data_dir / "meetings" / meeting_id / "audio.pcm"
+            with audio_path.open("rb") as audio_file:
+                audio_file.seek(sample_offset * 2)
+                pcm = audio_file.read((end_offset - sample_offset) * 2)
+            if len(pcm) != (end_offset - sample_offset) * 2:
+                raise ValueError("stored audio is shorter than the ASR checkpoint range")
+            return pcm
+
+    def save_cloud_asr_utterance(self, utterance: Utterance, end_sample: int | None) -> bool:
+        """Save a final subtitle and its replay checkpoint in one transaction."""
+        with self._lock:
+            if end_sample is not None:
+                _, stored_end = self.audio_position(utterance.meeting_id)
+                if not 0 <= end_sample <= stored_end:
+                    raise ValueError("cloud ASR checkpoint exceeds stored audio")
+            cursor = self._conn.execute(
+                "INSERT OR IGNORE INTO utterances VALUES(?,?,?,?,?,?,?)",
+                (utterance.utterance_id, utterance.meeting_id, utterance.speaker,
+                 utterance.language.value, utterance.text, utterance.timestamp_ms, utterance.seq),
+            )
+            if end_sample is not None:
+                self._conn.execute(
+                    "INSERT INTO cloud_asr_checkpoints(meeting_id, sample_offset) VALUES(?,?) "
+                    "ON CONFLICT(meeting_id) DO UPDATE SET sample_offset="
+                    "MAX(sample_offset, excluded.sample_offset)",
+                    (utterance.meeting_id, end_sample),
+                )
+            self._conn.commit()
+            return cursor.rowcount == 1
+
+    def set_cloud_asr_checkpoint(self, meeting_id: str, sample_offset: int) -> None:
+        with self._lock:
+            _, stored_end = self.audio_position(meeting_id)
+            if not 0 <= sample_offset <= stored_end:
+                raise ValueError("cloud ASR checkpoint exceeds stored audio")
+            self._conn.execute(
+                "INSERT INTO cloud_asr_checkpoints(meeting_id, sample_offset) VALUES(?,?) "
+                "ON CONFLICT(meeting_id) DO UPDATE SET sample_offset="
+                "MAX(sample_offset, excluded.sample_offset)",
+                (meeting_id, sample_offset),
             )
             self._conn.commit()
 

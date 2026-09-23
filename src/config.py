@@ -32,6 +32,15 @@ class Config:
         default_factory=lambda: os.environ.get("WHISPER_MODEL_PATH", "")
     )
     whisper_language: str = "zh"   # 默认普通话；粤语传 "yue"
+    asr_provider: str = field(
+        default_factory=lambda: os.environ.get("ASR_PROVIDER", "whisper").lower()
+    )
+    volc_api_key: str = field(
+        default_factory=lambda: os.environ.get("VOLC_API_KEY", "")
+    )
+    volc_resource_id: str = field(
+        default_factory=lambda: os.environ.get("VOLC_RESOURCE_ID", "volc.seedasr.sauc.duration")
+    )
 
     # ------------------------------------------------------------------
     # VAD 参数
