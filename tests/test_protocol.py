@@ -98,6 +98,7 @@ def test_websocket_audio_to_final_minutes(monkeypatch, tmp_path):
                for e in events)
     assert any(e["type"] == "minutes.ready" and e["data"]["phase"] == "final"
                for e in events)
+    assert not any(e["type"] in {"llm.delta", "tts.audio"} for e in events)
     assert store.count_utterances(meeting_id) == 1
     assert (tmp_path / "meetings" / meeting_id / "audio.pcm").stat().st_size == 60 * 320 * 2
 
@@ -206,3 +207,87 @@ def test_stop_answer_cancels_generation_and_meeting_keeps_listening(monkeypatch,
             )
 
     assert store.count_utterances(meeting_id) == 2
+
+
+def test_failed_web_search_reports_error_while_audio_continues(monkeypatch, tmp_path):
+    import json
+    import src.agent as agent
+    import src.tool_agent as tool_agent
+    import src.tts as tts
+
+    store = _fake_cloud(monkeypatch, tmp_path, [
+        (60, "小会，请查询最新天气", "zh"),
+        (120, "继续讨论蓝色方案", "zh"),
+    ])
+
+    async def choose_web(messages, *, required):
+        if required:
+            return {"content": None, "tool_calls": [{"id": "web1", "type": "function",
+                    "function": {"name": "search_web", "arguments": json.dumps({"query": "最新天气"})}}]}
+        return {"content": "没有更多工具"}
+
+    async def failed_web(query):
+        await asyncio.sleep(0.5)
+        raise TimeoutError("upstream timeout")
+
+    async def fake_stream(messages):
+        yield "网络资料暂不可用"
+
+    async def fake_tts(text, language):
+        return b"ID3"
+
+    monkeypatch.setattr(tool_agent, "_model_step", choose_web)
+    monkeypatch.setattr(tool_agent, "search_web", failed_web)
+    monkeypatch.setattr(agent, "stream_answer", fake_stream)
+    monkeypatch.setattr(tts, "synthesize_speech", fake_tts)
+    meeting_id = f"search-failure-{uuid.uuid4().hex}"
+    with TestClient(app) as client:
+        with client.websocket_connect(f"/ws/meetings/{meeting_id}") as ws:
+            ws.send_json({"type": "config", "language": "auto"})
+            _send_audio(ws, 0, 60)
+            events = _receive_until(ws, lambda e: e["type"] == "agent.step" and
+                                    e["data"]["status"] == "started")
+            _send_audio(ws, 60, 120)
+            events += _receive_until(ws, lambda e: e["type"] == "asr.final" and
+                                     e["data"]["text"] == "继续讨论蓝色方案")
+            events += _receive_until(ws, lambda e: e["type"] == "error" and
+                                     e["data"]["code"] == "SEARCH_FAILED")
+            events += _receive_until(ws, lambda e: e["type"] == "agent.state" and
+                                     e["data"]["state"] == "LISTENING")
+            ws.send_json({"type": "end_meeting"})
+            _receive_until(ws, lambda e: e["type"] == "agent.state" and
+                           e["data"]["state"] == "ENDED")
+
+    assert store.count_utterances(meeting_id) == 2
+    assert any(e["type"] == "ack" and e["data"]["seq"] == 119 for e in events)
+    assert any(e["type"] == "agent.step" and e["data"]["status"] == "failed"
+               for e in events)
+
+
+def test_partial_minutes_failure_is_visible_and_meeting_can_finish(monkeypatch, tmp_path):
+    import src.minutes as minutes_module
+
+    store = _fake_cloud(monkeypatch, tmp_path, [(60, "决定采用蓝色方案", "zh")])
+    original = minutes_module.MinutesService.build
+
+    async def fail_partial(self, meeting_id, phase="partial"):
+        if phase == "partial":
+            raise RuntimeError("simulated minutes failure")
+        return await original(self, meeting_id, phase)
+
+    monkeypatch.setattr(minutes_module.MinutesService, "build", fail_partial)
+    meeting_id = f"partial-error-{uuid.uuid4().hex}"
+    with TestClient(app) as client:
+        with client.websocket_connect(f"/ws/meetings/{meeting_id}") as ws:
+            ws.send_json({"type": "config", "language": "auto"})
+            _send_audio(ws, 0, 60)
+            ws.send_json({"type": "partial_minutes"})
+            events = _receive_until(ws, lambda e: e["type"] == "error" and
+                                    e["data"]["code"] == "MINUTES_FAILED")
+            assert any(e["type"] == "ack" and e["data"]["seq"] == 59 for e in events)
+            ws.send_json({"type": "end_meeting"})
+            events += _receive_until(ws, lambda e: e["type"] == "agent.state" and
+                                     e["data"]["state"] == "ENDED")
+    assert store.count_utterances(meeting_id) == 1
+    assert any(e["type"] == "minutes.ready" and e["data"]["phase"] == "final"
+               for e in events)

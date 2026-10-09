@@ -1,0 +1,13 @@
+{
+  "audio": "tests/fixtures/audio/meeting-30m.ogg",
+  "sample_seconds": 70,
+  "provider": "Volcengine Doubao streaming ASR 2.0",
+  "final_utterances": 13,
+  "unique_audio_time_ranges": 13,
+  "languages": [
+    "zh",
+    "yue"
+  ],
+  "deduplication": "same start/end timestamps with punctuation-only text variants",
+  "passed": true
+}

@@ -117,7 +117,13 @@ def test_utterances_emit_new_finals_once_and_language(monkeypatch):
         await ws.responses.put(provider_frame(interim))
         await ws.responses.put(provider_frame(interim))
         await ws.responses.put(provider_frame(final))
-        await ws.responses.put(provider_frame(final, last=True))
+        corrected = {"result": {"utterances": [
+            {"text": "大家好。", "start_time": 0, "end_time": 700,
+             "definite": True, "speaker_id": 2},
+            {"text": "下一句", "start_time": 800, "end_time": 1300,
+             "definite": False},
+        ]}}
+        await ws.responses.put(provider_frame(corrected, last=True))
         events = [event async for event in client.events()]
         await client.close()
         return client, events
@@ -151,6 +157,29 @@ def test_error_response_and_odd_pcm(monkeypatch):
         with pytest.raises(asr.VolcengineASRError, match="45000001"):
             _ = [event async for event in client.events()]
         await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_authentication_failure_explains_resource_and_request_id(monkeypatch):
+    class Forbidden(Exception):
+        status_code = 403
+        headers = {"X-Tt-Logid": "provider-trace"}
+
+    async def reject(_url, _headers):
+        raise Forbidden()
+
+    monkeypatch.setattr(asr, "_open_websocket", reject)
+
+    async def scenario():
+        client = asr.VolcengineASRClient("fake-key")
+        with pytest.raises(asr.VolcengineASRError) as caught:
+            await client.connect()
+        message = str(caught.value)
+        assert "HTTP 403" in message
+        assert "VOLC_RESOURCE_ID" in message
+        assert "provider-trace" in message
+        assert "fake-key" not in message
 
     asyncio.run(scenario())
 

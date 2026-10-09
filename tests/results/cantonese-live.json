@@ -1,0 +1,142 @@
+{
+  "meeting_id": "acceptance-yue-20261009-v3",
+  "audio": "tests/fixtures/audio/cantonese.wav",
+  "audio_seconds": 15.75,
+  "asset_seconds": 15.75,
+  "wall_seconds": 24.75,
+  "frames_sent": 79,
+  "frames_acked": 79,
+  "events": {
+    "agent.state": 5,
+    "ack": 80,
+    "asr.partial": 26,
+    "asr.final": 3,
+    "minutes.ready": 2,
+    "agent.step": 4,
+    "search.result": 1,
+    "llm.delta": 57,
+    "llm.done": 1,
+    "tts.audio": 1
+  },
+  "languages": {
+    "yue": 3
+  },
+  "states": [
+    "LISTENING",
+    "ANSWERING",
+    "LISTENING",
+    "ENDING",
+    "ENDED"
+  ],
+  "error_codes": [],
+  "saved_utterances": 3,
+  "first_final_seq": 20,
+  "last_final_seq": 72,
+  "tts_audio_bytes": 231698,
+  "answer_text": "头先决定咗：**下个礼拜三发布蓝色方案**（发言 ID：a73e2740bd0455e696bfada61a1ecc6a）。\n\n至于边个负责、具体几点发布，会议记录暂时冇讲，我唔清楚。",
+  "tool_steps": [
+    {
+      "tool": "search_meeting",
+      "status": "started",
+      "count": null
+    },
+    {
+      "tool": "search_meeting",
+      "status": "done",
+      "count": 3
+    },
+    {
+      "tool": "search_meeting",
+      "status": "started",
+      "count": null
+    },
+    {
+      "tool": "search_meeting",
+      "status": "done",
+      "count": 3
+    }
+  ],
+  "search_sources": {
+    "meeting": 4
+  },
+  "timeline": [
+    {
+      "second": 5.02,
+      "type": "asr.final",
+      "status": null,
+      "seq": 20
+    },
+    {
+      "second": 9.97,
+      "type": "minutes.ready",
+      "status": "partial",
+      "seq": null
+    },
+    {
+      "second": 10.34,
+      "type": "asr.final",
+      "status": null,
+      "seq": 47
+    },
+    {
+      "second": 15.32,
+      "type": "asr.final",
+      "status": null,
+      "seq": 72
+    },
+    {
+      "second": 16.28,
+      "type": "agent.step",
+      "status": "started",
+      "seq": null
+    },
+    {
+      "second": 16.28,
+      "type": "agent.step",
+      "status": "done",
+      "seq": null
+    },
+    {
+      "second": 16.28,
+      "type": "agent.step",
+      "status": "started",
+      "seq": null
+    },
+    {
+      "second": 16.3,
+      "type": "agent.step",
+      "status": "done",
+      "seq": null
+    },
+    {
+      "second": 19.29,
+      "type": "llm.done",
+      "status": null,
+      "seq": null
+    },
+    {
+      "second": 20.11,
+      "type": "tts.audio",
+      "status": null,
+      "seq": null
+    },
+    {
+      "second": 24.75,
+      "type": "minutes.ready",
+      "status": "final",
+      "seq": null
+    }
+  ],
+  "partial_minutes_received": 1,
+  "final_minutes": true,
+  "final_minutes_source_ids": 3,
+  "transcript_first": [
+    "今日我哋讨论云舟预约嘅发布时间。",
+    "我哋决定下个礼拜三发布蓝色方案"
+  ],
+  "transcript_last": [
+    "我哋决定下个礼拜三发布蓝色方案",
+    "小慧头先决定几时发布"
+  ],
+  "passed": true
+}

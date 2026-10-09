@@ -1,0 +1,17 @@
+{
+  "meeting_id": "acceptance-long-20261009-v2",
+  "resume_seconds": 5.95,
+  "audio_seconds": 1800.0,
+  "frames_stored": 9000,
+  "saved_utterances": 524,
+  "last_final_seq": 8997,
+  "history_final_events": 524,
+  "final_minutes_source_ids": 524,
+  "states": [
+    "LISTENING",
+    "ENDING",
+    "ENDED"
+  ],
+  "error_codes": [],
+  "passed": true
+}

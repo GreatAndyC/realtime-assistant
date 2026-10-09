@@ -1,0 +1,120 @@
+{
+  "meeting_id": "acceptance-knowledge-20261009-v4",
+  "audio": "tests/fixtures/audio/knowledge.wav",
+  "audio_seconds": 5.82,
+  "asset_seconds": 5.82,
+  "wall_seconds": 21.07,
+  "frames_sent": 30,
+  "frames_acked": 30,
+  "events": {
+    "agent.state": 5,
+    "ack": 31,
+    "asr.partial": 12,
+    "asr.final": 1,
+    "agent.step": 4,
+    "search.result": 1,
+    "llm.delta": 133,
+    "llm.done": 1,
+    "tts.audio": 1,
+    "minutes.ready": 1
+  },
+  "languages": {
+    "zh": 1
+  },
+  "states": [
+    "LISTENING",
+    "ANSWERING",
+    "LISTENING",
+    "ENDING",
+    "ENDED"
+  ],
+  "error_codes": [],
+  "saved_utterances": 1,
+  "tts_audio_bytes": 316077,
+  "answer_text": "根据检索资料 1（`knowledge/05-DeepSeek-V4-论文摘要.md`），DeepSeek-V4-Pro 和 DeepSeek-V4-Flash 都支持 **一百万 token 的上下文**。\n\n补充两点：\n- 该资料整理自论文摘要（arXiv:2606.19348），非论文全文，也非本项目实测。\n- 长上下文效率来源于 CSA 与 HCA 结合的混合注意力架构；论文还报告在一百万 token 设置下，V4-Pro 单 token 推理 FLOPs 为 V3.2 的 27%、KV 缓存为 10%。",
+  "tool_steps": [
+    {
+      "tool": "search_local_documents",
+      "status": "started",
+      "count": null
+    },
+    {
+      "tool": "search_local_documents",
+      "status": "done",
+      "count": 1
+    },
+    {
+      "tool": "search_local_documents",
+      "status": "started",
+      "count": null
+    },
+    {
+      "tool": "search_local_documents",
+      "status": "done",
+      "count": 1
+    }
+  ],
+  "search_sources": {
+    "local": 2
+  },
+  "timeline": [
+    {
+      "second": 5.47,
+      "type": "asr.final",
+      "status": null,
+      "seq": 22
+    },
+    {
+      "second": 6.42,
+      "type": "agent.step",
+      "status": "started",
+      "seq": null
+    },
+    {
+      "second": 6.42,
+      "type": "agent.step",
+      "status": "done",
+      "seq": null
+    },
+    {
+      "second": 6.42,
+      "type": "agent.step",
+      "status": "started",
+      "seq": null
+    },
+    {
+      "second": 6.44,
+      "type": "agent.step",
+      "status": "done",
+      "seq": null
+    },
+    {
+      "second": 10.07,
+      "type": "llm.done",
+      "status": null,
+      "seq": null
+    },
+    {
+      "second": 17.99,
+      "type": "tts.audio",
+      "status": null,
+      "seq": null
+    },
+    {
+      "second": 21.06,
+      "type": "minutes.ready",
+      "status": "final",
+      "seq": null
+    }
+  ],
+  "partial_minutes_received": 0,
+  "final_minutes": true,
+  "final_minutes_source_ids": 1,
+  "transcript_first": [
+    "小慧， Deepseek V 四支持多长的上下文？"
+  ],
+  "transcript_last": [
+    "小慧， Deepseek V 四支持多长的上下文？"
+  ],
+  "passed": true
+}

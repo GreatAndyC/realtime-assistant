@@ -1,0 +1,16 @@
+{
+  "phase": "final",
+  "discussion": [
+    "今日讨论云舟预约的发布时间。",
+    "小慧刚才决定了发布时间。"
+  ],
+  "decisions": [
+    "下个礼拜三发布蓝色方案。"
+  ],
+  "action_items": [],
+  "source_utterance_ids": [
+    "549f1b370e80552f91b11cfe73a9399d",
+    "a73e2740bd0455e696bfada61a1ecc6a",
+    "b2d64ed4f2a256beb1244fb715b1a78f"
+  ]
+}

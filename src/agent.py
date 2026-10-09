@@ -80,7 +80,8 @@ def build_messages(query: str, recent_utterances: Iterable[Any] = (),
 
 
 async def stream_answer(messages: list[dict[str, str]], *, api_key: str | None = None,
-                        base_url: str | None = None, model: str | None = None) -> AsyncIterator[str]:
+                        base_url: str | None = None, model: str | None = None,
+                        max_tokens: int | None = None) -> AsyncIterator[str]:
     """Yield visible text deltas from an OpenAI-compatible SSE chat endpoint."""
     key = api_key if api_key is not None else config.deepseek_api_key
     if not key:
@@ -89,6 +90,8 @@ async def stream_answer(messages: list[dict[str, str]], *, api_key: str | None =
 
     url = (base_url or config.llm_base_url).rstrip("/") + "/chat/completions"
     payload = {"model": model or config.llm_model, "messages": messages, "stream": True}
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
     timeout = httpx.Timeout(config.llm_timeout, connect=10.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         async with client.stream("POST", url, headers={"Authorization": f"Bearer {key}"}, json=payload) as response:

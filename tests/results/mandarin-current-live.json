@@ -1,0 +1,120 @@
+{
+  "meeting_id": "acceptance-zh-current-20261009",
+  "audio": "tests/fixtures/audio/mandarin.wav",
+  "audio_seconds": 17.03,
+  "asset_seconds": 17.03,
+  "wall_seconds": 29.36,
+  "frames_sent": 86,
+  "frames_acked": 86,
+  "events": {
+    "agent.state": 5,
+    "ack": 87,
+    "asr.partial": 26,
+    "asr.final": 3,
+    "minutes.ready": 2,
+    "agent.step": 2,
+    "search.result": 1,
+    "llm.delta": 42,
+    "llm.done": 1,
+    "tts.audio": 1
+  },
+  "languages": {
+    "zh": 3
+  },
+  "states": [
+    "LISTENING",
+    "ANSWERING",
+    "LISTENING",
+    "ENDING",
+    "ENDED"
+  ],
+  "error_codes": [],
+  "saved_utterances": 3,
+  "first_final_seq": 18,
+  "last_final_seq": 78,
+  "tts_audio_bytes": 120429,
+  "answer_text": "刚才决定的是：**下周三发布蓝色方案**，先完成回归测试。  \n依据：会议发言 `bc2c67964ff5558a8c845005132c6524`。",
+  "tool_steps": [
+    {
+      "tool": "search_meeting",
+      "status": "started",
+      "count": null
+    },
+    {
+      "tool": "search_meeting",
+      "status": "done",
+      "count": 3
+    }
+  ],
+  "search_sources": {
+    "meeting": 3
+  },
+  "timeline": [
+    {
+      "second": 4.93,
+      "type": "asr.final",
+      "status": null,
+      "seq": 18
+    },
+    {
+      "second": 9.09,
+      "type": "minutes.ready",
+      "status": "partial",
+      "seq": null
+    },
+    {
+      "second": 11.83,
+      "type": "asr.final",
+      "status": null,
+      "seq": 53
+    },
+    {
+      "second": 17.18,
+      "type": "asr.final",
+      "status": null,
+      "seq": 78
+    },
+    {
+      "second": 18.26,
+      "type": "agent.step",
+      "status": "started",
+      "seq": null
+    },
+    {
+      "second": 18.29,
+      "type": "agent.step",
+      "status": "done",
+      "seq": null
+    },
+    {
+      "second": 21.0,
+      "type": "llm.done",
+      "status": null,
+      "seq": null
+    },
+    {
+      "second": 24.25,
+      "type": "tts.audio",
+      "status": null,
+      "seq": null
+    },
+    {
+      "second": 29.36,
+      "type": "minutes.ready",
+      "status": "final",
+      "seq": null
+    }
+  ],
+  "partial_minutes_received": 1,
+  "final_minutes": true,
+  "final_minutes_source_ids": 3,
+  "transcript_first": [
+    "今天讨论云舟预约的上线时间。",
+    "我们决定下周三发布蓝色方案，先完成回归测试。"
+  ],
+  "transcript_last": [
+    "我们决定下周三发布蓝色方案，先完成回归测试。",
+    "小慧刚才决定什么时候发布"
+  ],
+  "passed": true
+}

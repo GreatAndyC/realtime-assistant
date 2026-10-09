@@ -6,7 +6,7 @@ import struct
 
 from fastapi.testclient import TestClient
 
-from src.models import Language
+from src.models import ConfigMessage, Language
 from src.server import app
 from src.storage import Storage
 from src.volcengine_asr import TranscriptEvent
@@ -26,6 +26,35 @@ def test_meeting_requires_cloud_asr_key_before_creating_record(monkeypatch, tmp_
             assert event["type"] == "error"
             assert "VOLC_API_KEY" in event["data"]["message"]
     assert store.get_meeting("no-key") is None
+
+
+def test_cloud_auth_failure_prevents_recording_start(monkeypatch, tmp_path):
+    import src.server as server
+    import src.volcengine_asr as volcengine_asr
+
+    class RejectedVolcengine:
+        def __init__(self, api_key, resource_id):
+            pass
+
+        async def connect(self):
+            raise volcengine_asr.VolcengineASRError("火山引擎拒绝 ASR 连接（HTTP 403）")
+
+        async def close(self):
+            pass
+
+    store = Storage(tmp_path / "meetings.db", tmp_path)
+    monkeypatch.setattr(server, "storage", store)
+    monkeypatch.setattr(server.config, "volc_api_key", "test-key")
+    monkeypatch.setattr(volcengine_asr, "VolcengineASRClient", RejectedVolcengine)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/meetings/rejected") as ws:
+            ws.send_json({"type": "config", "language": "auto"})
+            event = ws.receive_json()
+            assert event["type"] == "error"
+            assert "HTTP 403" in event["data"]["message"]
+            assert event["data"]["recoverable"] is False
+    assert store.audio_position("rejected") == (-1, 0)
 
 
 def test_volcengine_stream_reuses_meeting_pipeline(monkeypatch, tmp_path):
@@ -152,3 +181,98 @@ def test_cloud_asr_replays_persisted_audio_after_browser_reconnect(monkeypatch, 
     assert sum(map(len, sent)) == 20 * 320 * 2
     assert store.cloud_asr_checkpoint("replay-test") == 6400
     assert store.count_utterances("replay-test") == 1
+
+
+def test_failed_asr_finish_keeps_meeting_retryable(monkeypatch, tmp_path):
+    import src.server as server
+    import src.volcengine_asr as volcengine_asr
+
+    store = Storage(tmp_path / "meetings.db", tmp_path)
+    monkeypatch.setattr(server, "storage", store)
+    monkeypatch.setattr(server.config, "volc_api_key", "test-key")
+    connections = []
+
+    class FlakyVolcengine:
+        def __init__(self, api_key, resource_id):
+            self.responses = asyncio.Queue()
+            connections.append(self)
+
+        async def connect(self):
+            pass
+
+        async def send_pcm(self, pcm):
+            pass
+
+        async def finish(self):
+            if self is connections[0]:
+                raise ConnectionError("temporary upstream failure")
+            await self.responses.put(TranscriptEvent(
+                "今天决定采用方案A", True, language="zh", end_ms=400,
+            ))
+            await self.responses.put(None)
+
+        async def events(self):
+            while (event := await self.responses.get()) is not None:
+                yield event
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(volcengine_asr, "VolcengineASRClient", FlakyVolcengine)
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/meetings/retry-finish") as ws:
+            ws.send_json({"type": "config", "language": "auto"})
+            for seq in range(20):
+                ws.send_bytes(struct.pack("<IQ", seq, seq * 320) + b"\x00\x01" * 320)
+            ws.send_json({"type": "end_meeting"})
+            first = []
+            while not (first and first[-1]["type"] == "agent.state" and
+                       first[-1]["data"]["state"] == "LISTENING" and
+                       any(e["type"] == "error" for e in first)):
+                first.append(ws.receive_json())
+            assert any(e["type"] == "error" and e["data"]["code"] == "ASR_FAILED"
+                       for e in first)
+            assert not any(e["type"] == "minutes.ready" for e in first)
+            ws.send_json({"type": "end_meeting"})
+            second = []
+            while not (second and second[-1]["type"] == "agent.state" and
+                       second[-1]["data"]["state"] == "ENDED"):
+                second.append(ws.receive_json())
+
+    assert len(connections) == 2
+    assert store.count_utterances("retry-finish") == 1
+    assert store.get_minutes("retry-finish") is not None
+
+
+def test_corrected_final_at_same_audio_time_is_not_saved_twice(monkeypatch, tmp_path):
+    import src.server as server
+
+    store = Storage(tmp_path / "meetings.db", tmp_path)
+    store.create_or_resume("corrected-final", Language.AUTO, "未知发言人")
+    for seq in range(20):
+        store.append_audio("corrected-final", seq, seq * 320, b"\x00\x01" * 320)
+    monkeypatch.setattr(server, "storage", store)
+    monkeypatch.setattr(server.config, "volc_api_key", "test-key")
+
+    class FakeSocket:
+        def __init__(self):
+            self.events = []
+
+        async def send_json(self, event):
+            self.events.append(event)
+
+    socket = FakeSocket()
+
+    async def scenario():
+        session = server.MeetingSession(socket, "corrected-final", ConfigMessage())
+        await session._handle_volc_event(TranscriptEvent(
+            "客服资料需要同步更新。", True, language="zh", end_ms=200,
+        ))
+        await session._handle_volc_event(TranscriptEvent(
+            "客服资料需要同步更新", True, language="zh", end_ms=200,
+        ))
+
+    asyncio.run(scenario())
+    assert store.count_utterances("corrected-final") == 1
+    assert sum(event["type"] == "asr.final" for event in socket.events) == 1
+    store.close()

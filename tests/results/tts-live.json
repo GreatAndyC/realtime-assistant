@@ -1,0 +1,19 @@
+{
+  "checks": [
+    {
+      "language": "zh",
+      "provider": "volcengine",
+      "codec": "mp3",
+      "duration_seconds": 1.872,
+      "audio_bytes": 15021
+    },
+    {
+      "language": "yue",
+      "provider": "system",
+      "codec": "mp3",
+      "duration_seconds": 1.959167,
+      "audio_bytes": 23554
+    }
+  ],
+  "passed": true
+}

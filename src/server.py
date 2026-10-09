@@ -73,6 +73,7 @@ class MeetingSession:
         self.answer_task: asyncio.Task | None = None
         self.minutes_tasks: set[asyncio.Task] = set()
         self.volc = None
+        self.volc_audio_sent = False
         self.volc_reader: asyncio.Task | None = None
         self.volc_finishing = False
         self.volc_error: Exception | None = None
@@ -142,8 +143,8 @@ class MeetingSession:
             log.exception("Volcengine ASR send failed")
             await self.error("ASR_FAILED", f"火山语音连接失败：{exc}")
 
-    async def flush(self):
-        await self._flush_volc()
+    async def flush(self) -> bool:
+        return await self._flush_volc()
 
     async def _open_volc(self):
         """Open a provider session and replay audio since the last confirmed sentence."""
@@ -158,6 +159,7 @@ class MeetingSession:
         client = VolcengineASRClient(config.volc_api_key, config.volc_resource_id)
         await client.connect()
         self.volc = client
+        self.volc_audio_sent = False
         self.volc_error = None
         self.volc_finishing = False
         self.volc_session_start = self.volc_pending_start or 0
@@ -169,6 +171,7 @@ class MeetingSession:
         replay = bytes(self.volc_pending)
         for start in range(0, len(replay), 6400):
             await client.send_pcm(replay[start:start + 6400])
+            self.volc_audio_sent = True
 
     async def _send_volc(self, pcm: bytes):
         if self.volc is None or (self.volc_reader and self.volc_reader.done()):
@@ -176,17 +179,10 @@ class MeetingSession:
             return
         try:
             await self.volc.send_pcm(pcm)
+            self.volc_audio_sent = True
         except Exception:
             log.warning("Volcengine ASR connection dropped; reopening", exc_info=True)
             await self._open_volc()
-
-    async def resume_asr(self):
-        if self.volc_pending:
-            try:
-                await self._open_volc()
-            except Exception as exc:
-                log.warning("Could not resume persisted cloud audio: %s", exc)
-                await self.error("ASR_FAILED", f"火山语音恢复失败：{exc}")
 
     async def _read_volc(self, client):
         try:
@@ -223,7 +219,7 @@ class MeetingSession:
         else:
             language = Language.YUE if event.language == "yue" else Language.ZH
         end_sample = None
-        if event.end_ms is not None and self.volc_pending_start is not None:
+        if event.end_ms is not None and event.end_ms > 0 and self.volc_pending_start is not None:
             _, stored_end = storage.audio_position(self.meeting_id)
             end_sample = min(stored_end,
                              self.volc_session_start + max(0, round(event.end_ms * 16)))
@@ -231,7 +227,7 @@ class MeetingSession:
                       if end_sample is not None else None)
         seq, timestamp_ms = (frame_info if frame_info is not None
                              else (self.volc_last_seq, int(time.time() * 1000)))
-        identity = (f"{end_sample}:{text}" if end_sample is not None
+        identity = (f"{end_sample}" if end_sample is not None
                     else f"{self.volc_session_start}:fallback:{text}")
         utterance = Utterance(
             utterance_id=uuid.uuid5(uuid.NAMESPACE_URL,
@@ -262,8 +258,10 @@ class MeetingSession:
 
     async def _flush_volc(self):
         if self.volc is None and not self.volc_pending:
-            return
+            return True
         try:
+            if not self.volc_audio_sent and not self.volc_pending:
+                return True
             if self.volc is None or (self.volc_reader and self.volc_reader.done()):
                 await self._open_volc()
             self.volc_finishing = True
@@ -277,10 +275,12 @@ class MeetingSession:
             )
             self.volc_pending.clear()
             self.volc_pending_start = None
+            return True
         except Exception as exc:
             log.exception("Volcengine ASR flush failed")
             with suppress(Exception):
                 await self.error("ASR_FAILED", f"火山语音收尾失败：{exc}")
+            return False
         finally:
             if self.volc_reader and not self.volc_reader.done():
                 self.volc_reader.cancel()
@@ -326,6 +326,12 @@ class MeetingSession:
         try:
             async def emit_step(step):
                 await self.send(WSEventType.AGENT_STEP, step, request_id=request_id)
+                if step.get("status") == "failed":
+                    await self.error(
+                        "SEARCH_FAILED",
+                        f"{step.get('label', '资料检索')}失败，会议收音会继续。",
+                        request_id=request_id,
+                    )
 
             snippets = await gather_agent_evidence(question, storage, self.meeting_id, emit_step)
             await self.send(WSEventType.SEARCH_RESULT,
@@ -378,12 +384,23 @@ class MeetingSession:
         storage.save_minutes(self.meeting_id, result)
         await self.send(WSEventType.MINUTES_READY, result.model_dump(mode="json"))
 
+    async def partial_minutes(self):
+        try:
+            await self.minutes("partial")
+        except Exception as exc:
+            log.exception("Partial minutes failed")
+            with suppress(Exception):
+                await self.error("MINUTES_FAILED", f"阶段纪要生成失败：{exc}")
+
     async def end(self):
         if self.ending:
             return
         self.ending = True
         await self.set_state(AgentState.ENDING)
-        await self.flush()
+        if not await self.flush():
+            self.ending = False
+            await self.set_state(AgentState.LISTENING)
+            return False
         if self.answer_task and not self.answer_task.done():
             await self.answer_task
         if self.minutes_tasks:
@@ -392,7 +409,11 @@ class MeetingSession:
             await self.minutes("final")
         except Exception as exc:
             await self.error("MINUTES_FAILED", str(exc))
+            self.ending = False
+            await self.set_state(AgentState.LISTENING)
+            return False
         await self.set_state(AgentState.ENDED)
+        return True
 
     async def close(self):
         if self.answer_task and not self.answer_task.done():
@@ -411,6 +432,7 @@ class MeetingSession:
 async def meeting_socket(ws: WebSocket, meeting_id: str):
     await ws.accept()
     session = None
+    ready = False
     try:
         storage.validate_id(meeting_id)
         if meeting_id in _active:
@@ -427,6 +449,10 @@ async def meeting_socket(ws: WebSocket, meeting_id: str):
         storage.create_or_resume(meeting_id, settings.language, settings.speaker[:100])
         session = MeetingSession(ws, meeting_id, settings)
         _active[meeting_id] = session
+        # Verify cloud access before telling the browser it may start recording.
+        # The same connection is then reused for live audio or pending replay.
+        await session._open_volc()
+        ready = True
         await session.set_state(AgentState.LISTENING)
         last_seq, sample_offset = storage.audio_position(meeting_id)
         await session.send(WSEventType.ACK, {"seq": last_seq, "sample_offset": sample_offset})
@@ -436,7 +462,6 @@ async def meeting_socket(ws: WebSocket, meeting_id: str):
                                 "speaker": utterance.speaker, "language": utterance.language.value,
                                 "seq": utterance.seq, "timestamp_ms": utterance.timestamp_ms},
                                utterance_id=utterance.utterance_id)
-        await session.resume_asr()
         while True:
             msg = await ws.receive()
             if msg["type"] == "websocket.disconnect":
@@ -452,14 +477,14 @@ async def meeting_socket(ws: WebSocket, meeting_id: str):
                 if kind == ControlType.FLUSH.value:
                     await session.flush()
                 elif kind == ControlType.PARTIAL_MINUTES.value:
-                    task = asyncio.create_task(session.minutes("partial"))
+                    task = asyncio.create_task(session.partial_minutes())
                     session.minutes_tasks.add(task)
                     task.add_done_callback(session.minutes_tasks.discard)
                 elif kind == ControlType.STOP_ANSWER.value:
                     await session.stop_answer()
                 elif kind == ControlType.END_MEETING.value:
-                    await session.end()
-                    break
+                    if await session.end():
+                        break
                 else:
                     await session.error("CONTROL_UNKNOWN", "Unknown control message")
             except json.JSONDecodeError:
@@ -476,8 +501,9 @@ async def meeting_socket(ws: WebSocket, meeting_id: str):
                                     "data": {"code": "SESSION_FAILED", "message": str(exc)}})
     finally:
         if session:
-            with suppress(Exception):
-                await session.flush()
+            if ready:
+                with suppress(Exception):
+                    await session.flush()
             await session.close()
             _active.pop(meeting_id, None)
         with suppress(Exception):

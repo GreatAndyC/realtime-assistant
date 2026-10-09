@@ -154,7 +154,7 @@ class VolcengineASRClient:
         self._finish_sent = False
         self.finished = False
         self._closed = False
-        self._final_utterances: set[tuple[Any, Any, str]] = set()
+        self._final_utterances: set[tuple[Any, ...]] = set()
         self._last_partial: tuple[Any, Any, str] | None = None
 
     async def connect(self) -> None:
@@ -191,7 +191,18 @@ class VolcengineASRClient:
             await self._ws.send(_pack(1, 1, 1, json.dumps(request).encode("utf-8"), self._sequence))
         except Exception as exc:
             await self.close()
-            raise VolcengineASRError("Could not connect to Volcengine ASR") from exc
+            status = getattr(exc, "status_code", None)
+            if status in (401, 403):
+                headers = getattr(exc, "headers", None)
+                log_id = headers.get("X-Tt-Logid") if headers is not None else None
+                detail = f"；火山请求 ID：{log_id}" if log_id else ""
+                raise VolcengineASRError(
+                    f"火山引擎拒绝 ASR 连接（HTTP {status}）。请在豆包语音控制台确认当前项目的 API Key 可用，"
+                    f"且已开通与 VOLC_RESOURCE_ID 对应的流式语音识别服务{detail}"
+                ) from exc
+            if isinstance(status, int):
+                raise VolcengineASRError(f"火山引擎 ASR 连接失败（HTTP {status}）") from exc
+            raise VolcengineASRError("无法连接火山引擎 ASR，请检查网络和接口地址") from exc
 
     async def send_pcm(self, pcm: bytes) -> None:
         if len(pcm) % 2:
@@ -265,6 +276,11 @@ class VolcengineASRClient:
                     start_ms = utterance.get("start_time")
                     end_ms = utterance.get("end_time")
                     key = (start_ms, end_ms, text)
+                    # The provider may send a second definitive transcript at
+                    # stream checkpoints with punctuation removed. Its audio
+                    # times identify the same utterance even when text differs.
+                    final_key = ((start_ms, end_ms) if isinstance(end_ms, int) and end_ms > 0
+                                 else (start_ms, end_ms, text))
                     final = utterance.get("definite") is True or last_response
                     speaker = utterance.get("speaker_id")
                     event = TranscriptEvent(
@@ -276,8 +292,8 @@ class VolcengineASRClient:
                         end_ms=end_ms if isinstance(end_ms, int) else None,
                     )
                     if final:
-                        if key not in self._final_utterances:
-                            self._final_utterances.add(key)
+                        if final_key not in self._final_utterances:
+                            self._final_utterances.add(final_key)
                             yield event
                         self._last_partial = None
                     elif key != self._last_partial:

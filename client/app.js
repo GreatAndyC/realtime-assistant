@@ -98,6 +98,12 @@ function connect() {
     socket.onmessage = event => {
       try {
         const message = JSON.parse(event.data);
+        if (!handshakeComplete && message.type === 'error') {
+          app.shouldReconnect = false;
+          socket.close();
+          reject(new Error(message.data?.message || '语音服务连接失败。'));
+          return;
+        }
         if (!handshakeComplete && message.type === 'ack' && Number.isSafeInteger(Number(message.data?.sample_offset))
             && Number(message.data.seq) < app.lastAck) {
           app.shouldReconnect = false;
@@ -441,7 +447,13 @@ function handleEvent(event) {
     case 'tts.audio': enqueueAudio(data); break;
     case 'tts.stop': stopAnswerPlayback(); notice('回答已停止，会议继续收音。'); break;
     case 'minutes.ready': renderMinutes(data); break;
-    case 'error': notice(`${data.message || '服务端发生错误'}${data.recoverable === false ? '，请重新开始会议。' : ''}`, true); break;
+    case 'error':
+      if (app.ending && ['ASR_FAILED', 'MINUTES_FAILED'].includes(data.code)) {
+        app.ending = false;
+        updateControls();
+      }
+      notice(`${data.message || '服务端发生错误'}${data.recoverable === false ? '，请重新开始会议。' : ''}`, true);
+      break;
   }
 }
 

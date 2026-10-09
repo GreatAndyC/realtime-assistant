@@ -1,8 +1,8 @@
 # 小会 · 实时会议助手
 
-浏览器收听会议，经服务端 WebSocket 接入火山引擎豆包流式语音识别 2.0，显示普通话或粤语字幕。在句首唤醒“小会”可检索资料、回答问题、朗读结果；会议中和结束后可生成结构化纪要。
+浏览器持续采集会议音频，经服务端 WebSocket 接入火山引擎豆包流式语音识别 2.0，显示普通话或粤语字幕。在句首唤醒“小会”可检索资料、回答问题、朗读结果；会议中和结束后可生成结构化纪要。
 
-目前是 macOS 单机原型。真实多人会议、30 分钟连续运行和粤语说话人区分效果仍需验证。
+目前是 macOS 单机原型。30 分钟普通话与粤语混合的合成会议已按实时速率完成验收；真人多人录音的识别准确率和粤语说话人区分效果仍需验证。
 
 ## 功能
 
@@ -14,11 +14,11 @@
 | 唤醒式 Agent 问答 | 句首出现“小会”等唤醒词时，DeepSeek 根据问题选择会议记录、本地资料或网页搜索工具，最多连续调用三次；页面显示工具步骤、流式回答和 MP3 音频。 |
 | 会议纪要 | 完整转写保存至 SQLite；每 10 条最终字幕生成阶段摘要，可手动生成阶段纪要，结束时生成讨论、决定和待办事项。 |
 
-实现细节与数据流见 [架构说明](ARCHITECTURE.md)。
+实现细节与数据流见 [架构说明](ARCHITECTURE.md)；逐项测试步骤、真实回放结果、测试音频和纪要样例见 [测试与验收](TESTING.md)。
 
 ## 安装与启动
 
-需要 **macOS、Python 3.11、[uv](https://docs.astral.sh/uv/)、FFmpeg**，以及系统自带的 say（用于回答的语音合成）。语音识别还需要在[火山引擎豆包语音控制台](https://console.volcengine.com/speech/app)开通豆包流式语音识别模型 2.0，并取得 API Key。
+需要 **macOS、Python 3.11、[uv](https://docs.astral.sh/uv/)、FFmpeg**，以及系统自带的 say（默认回答朗读）。语音识别还需要在[火山引擎豆包语音控制台](https://console.volcengine.com/speech/app)开通豆包流式语音识别模型 2.0，并取得 API Key。更自然的云端朗读还需单独开通语音合成 2.0。
 
 在仓库根目录运行：
 
@@ -39,7 +39,7 @@ DEEPSEEK_API_KEY=你的问答服务密钥
 启动服务：
 
 ~~~bash
-.venv/bin/uvicorn src.server:app --host 127.0.0.1 --port 8000 --env-file .env
+./scripts/start.sh
 ~~~
 
 打开 <http://127.0.0.1:8000>。`GET /health` 中的 `asr_configured` 应为 `true`。未配置火山密钥时，服务可以启动，但会议收音无法连接 ASR；未配置 DeepSeek 密钥时，语音转写仍可使用，唤醒问答会报配置错误，纪要使用基于原文的提取结果。
@@ -52,6 +52,10 @@ DEEPSEEK_API_KEY=你的问答服务密钥
 
 该命令使用本机 `.env` 中的火山配置，并打印流式识别事件。会议音频会发送到所配置的火山服务。
 
+### 改善回答音色
+
+默认 `TTS_PROVIDER=system`，回答由 macOS 的 Tingting（普通话）或 Sinji（粤语）朗读。要使用火山[豆包语音合成 2.0](https://docs.volcengine.com/docs/DoubaoVoice/unidirectional-streaming-text-to-speech-http?lang=zh)，先在控制台单独开通“语音合成2.0”，然后在 `.env` 中设置 `TTS_PROVIDER=volcengine` 并重启服务。它复用 `VOLC_API_KEY`，默认普通话音色为 `zh_female_vv_uranus_bigtts`；可用 `VOLC_TTS_VOICE_ZH` 改为音色库中的其他 2.0 音色。粤语需另外设置支持粤语的 `VOLC_TTS_VOICE_YUE`，否则沿用本地 Sinji。云端合成按火山服务的额度和计费规则消耗字符。
+
 ## 使用
 
 打开页面、允许麦克风访问，输入会议编号并点击“开始收音”。默认采用接口返回的语种标签；未返回标签时暂按普通话处理。如果识别不准，可在开始前手动选择普通话或粤语。
@@ -60,7 +64,7 @@ DEEPSEEK_API_KEY=你的问答服务密钥
 2. 在一句话开头说“**小会，刚才决定了什么？**”可触发问答；页面显示工具调用、检索来源、逐步输出的回答和语音播放。回答过程中说“**小慧暂停**”（也识别“小会暂停”），或点击“停止回答”，可中断回答而继续收音。
 3. 点击“生成阶段纪要”可在会议中查看讨论、决定和待办；点击“结束并生成最终纪要”完成收音并保存最终结果。
 
-`knowledge/` 内含四份标明 Mock 的虚构演示资料；也可放入 Markdown、TXT 或可提取文本的 PDF 供本地检索，扫描版 PDF 不支持 OCR。会议音频和转写数据库保存在 `data/`，不纳入 Git。本地资料不足或问题涉及最新信息时会尝试网页搜索，结果取决于外部搜索服务。
+`knowledge/` 内含四份标明 Mock 的虚构演示资料和一份注明来源的 DeepSeek-V4 论文摘要整理；也可放入 Markdown、TXT 或可提取文本的 PDF 供本地检索，扫描版 PDF 不支持 OCR。会议音频和转写数据库保存在 `data/`，不纳入 Git。本地资料不足或问题涉及最新信息时会尝试网页搜索；普通百科问题在通用搜索失败时可退回维基百科，实时信息搜索失败会明确报错。
 
 ## 配置与接口
 
@@ -70,6 +74,8 @@ DEEPSEEK_API_KEY=你的问答服务密钥
 | --- | --- |
 | VOLC_API_KEY | 豆包流式 ASR 的 API Key；收音转写必需。 |
 | VOLC_RESOURCE_ID | 豆包流式 ASR 资源 ID，默认 volc.seedasr.sauc.duration。 |
+| TTS_PROVIDER | 回答朗读来源：`system`（默认）或 `volcengine`（语音合成 2.0）。 |
+| VOLC_TTS_VOICE_ZH、VOLC_TTS_VOICE_YUE | 可选的普通话与粤语音色 ID。粤语未配置时使用本地语音。 |
 | DEEPSEEK_API_KEY | 唤醒问答和模型生成纪要所需的 API Key。 |
 | LLM_BASE_URL、LLM_MODEL | OpenAI 兼容接口地址与模型名。 |
 | DATA_DIR、DB_PATH、KNOWLEDGE_DIR | 会议音频、SQLite 数据库和本地资料目录。 |
@@ -80,13 +86,14 @@ DEEPSEEK_API_KEY=你的问答服务密钥
 
 ~~~bash
 .venv/bin/python -m pytest -q
+node --test tests/test_client_audio.mjs
 ~~~
 
-自动化测试通过模拟火山连接覆盖音频帧、重连、字幕到纪要流程，不等同于真实接口或真人语音质量验收。普通话/粤语自动标签依赖火山返回的信息；粤语与说话人编号同时使用的效果仍需真人会议录音验证。火山官方将流式说话人分离标注为中英文能力，见[流式接口](https://www.volcengine.com/docs/6561/1354869?lang=zh)与[说话人分离](https://docs.volcengine.com/docs/DoubaoVoice/speaker-separation?lang=zh)。
+自动化测试通过模拟火山连接覆盖音频帧、重连、字幕到纪要流程；[测试与验收](TESTING.md)另附真实 ASR、LLM、TTS 和 30 分钟实时回放结果。合成录音不能代表真人语音质量。普通话/粤语自动标签依赖火山返回的信息；粤语与说话人编号同时使用的效果仍需真人会议录音验证。火山官方将流式说话人分离标注为中英文能力，见[流式接口](https://www.volcengine.com/docs/6561/1354869?lang=zh)与[说话人分离](https://docs.volcengine.com/docs/DoubaoVoice/speaker-separation?lang=zh)。
 
 - 云端 ASR 需要网络、已开通的资源和可用额度；接口中断时会尝试重连并重放尚未确认识别的音频。说话人 ID 只在单次上游连接内有效，重连后编号可能变化。
 - 网络搜索与模型问答依赖外部服务；LLM 请求会发送问题、相关会议片段和检索片段到配置的接口。
-- 30 分钟连续会议、真实多人语音效果及延迟尚未完成可复现验收；测试方案见[架构说明](ARCHITECTURE.md#验收)。
+- 30 分钟合成会议已完成可复现验收；真人多人会议中的识别准确率、说话人区分和端到端延迟尚未实测。见[测试结果](TESTING.md#实际结果)。
 
 ## 许可证
 

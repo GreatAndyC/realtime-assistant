@@ -1,0 +1,20 @@
+{
+  "phase": "final",
+  "discussion": [
+    "提到小慧决定何时发布的问题。"
+  ],
+  "decisions": [
+    "下周三发布蓝色方案，先完成回归测试。"
+  ],
+  "action_items": [
+    {
+      "person": null,
+      "action": "完成回归测试",
+      "deadline": null
+    }
+  ],
+  "source_utterance_ids": [
+    "2c48a71a13525ef0aa21238dc553ff26",
+    "cd687aedcf815d1a97cea1cb05a1878a"
+  ]
+}

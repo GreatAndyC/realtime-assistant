@@ -61,6 +61,7 @@ async def gather_agent_evidence(question: str, store: Storage, meeting_id: str,
         {"role": "user", "content": question[:1000]},
     ]
     results: list[dict[str, Any]] = []
+    cache: dict[tuple[str, str], list[dict[str, Any]]] = {}
     calls_done = 0
     try:
         for round_number in range(3):
@@ -79,17 +80,32 @@ async def gather_agent_evidence(question: str, store: Storage, meeting_id: str,
                     if name not in LABELS or not isinstance(query, str) or not query.strip():
                         raise ValueError("无效的工具名称或检索词")
                     query = query.strip()[:200]
+                    local_prefetched = None
+                    if name == "search_web":
+                        # Fresh facts may use the web. Other questions first
+                        # use a sufficient matching local document, if present.
+                        local_prefetched = await asyncio.to_thread(search_local, query)
+                        if not needs_web_search(question, local_prefetched):
+                            name = "search_local_documents"
                     await emit({"step": calls_done + 1, "tool": name, "label": LABELS[name], "status": "started", "query": query})
-                    if name == "search_meeting":
+                    cache_key = (name, query)
+                    cached = cache_key in cache
+                    if cached:
+                        found = cache[cache_key]
+                    elif name == "search_meeting":
                         found = await asyncio.to_thread(_meeting_results, store, meeting_id, query)
                     elif name == "search_local_documents":
-                        found = await asyncio.to_thread(search_local, query)
+                        found = (local_prefetched if local_prefetched is not None
+                                 else await asyncio.to_thread(search_local, query))
                     else:
                         found = await asyncio.wait_for(search_web(query), timeout=config.web_search_timeout)
                     found = found[:4]
+                    cache[cache_key] = found
                     results.extend(found)
                     content = json.dumps(found, ensure_ascii=False)[:6000]
-                    await emit({"step": calls_done + 1, "tool": name, "label": LABELS[name], "status": "done", "count": len(found), "snippets": found})
+                    await emit({"step": calls_done + 1, "tool": name, "label": LABELS[name],
+                                "status": "done", "count": len(found), "snippets": found,
+                                "cached": cached})
                 except Exception as exc:
                     log.warning("Agent tool %s failed: %s", name, exc)
                     content = json.dumps({"error": str(exc)[:160]}, ensure_ascii=False)
@@ -111,5 +127,15 @@ async def gather_agent_evidence(question: str, store: Storage, meeting_id: str,
                 results.extend(await asyncio.wait_for(search_web(question), timeout=config.web_search_timeout))
             except Exception as web_exc:
                 log.warning("Fallback web search failed: %s", web_exc)
+                await emit({"step": calls_done + 1, "tool": "search_web", "label": "网页",
+                            "status": "failed", "count": 0})
         await emit({"step": calls_done + 1, "tool": "fallback", "label": "基础检索", "status": "done", "count": len(results), "snippets": results[:4]})
-    return results[:config.max_search_snippets]
+    unique = []
+    seen = set()
+    for item in results:
+        identity = (item.get("source"), item.get("title"), item.get("path") or item.get("url"),
+                    item.get("snippet"))
+        if identity not in seen:
+            seen.add(identity)
+            unique.append(item)
+    return unique[:config.max_search_snippets]

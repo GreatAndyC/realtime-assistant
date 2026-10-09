@@ -1,0 +1,40 @@
+{
+  "prior_meeting_question_in_context": true,
+  "tool_steps": [
+    {
+      "tool": "search_meeting",
+      "status": "started",
+      "count": null
+    },
+    {
+      "tool": "search_meeting",
+      "status": "done",
+      "count": 1
+    },
+    {
+      "tool": "search_meeting",
+      "status": "started",
+      "count": null
+    },
+    {
+      "tool": "search_meeting",
+      "status": "done",
+      "count": 1
+    },
+    {
+      "tool": "search_local_documents",
+      "status": "started",
+      "count": null
+    },
+    {
+      "tool": "search_local_documents",
+      "status": "done",
+      "count": 3
+    }
+  ],
+  "local_sources": 3,
+  "answer_mentions_CSA": true,
+  "answer_mentions_HCA": true,
+  "answer_text": "据资料 2，DeepSeek-V4 提升长上下文效率的核心方式是采用**混合注意力架构**：把**压缩稀疏注意力（CSA）**和**高度压缩注意力（HCA）**结合起来。\n\n另外，论文还提出**流形约束超连接（mHC）**来改进残差连接，并使用 **Muon 优化器**改善训练收敛速度与稳定性。资料还提到，在一百万 token 设置下，DeepSeek-V4-Pro 的单 token 推理 FLOPs 为 DeepSeek-V3.2 的 27%，KV 缓存为 10%，但这是论文报告结果，不是本项目实测。\n\n来源：[资料 2] `knowledge/05-DeepSeek-V4-论文摘要.md`，对应论文 arXiv:2606.19348。",
+  "passed": true
+}

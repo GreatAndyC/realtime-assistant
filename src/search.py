@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
+
+import httpx
 
 from .config import config
 
@@ -96,7 +100,7 @@ def search_local(query: str, *, knowledge_dir: Path | None = None, limit: int | 
 
 
 async def search_web(query: str, *, limit: int | None = None) -> list[dict[str, Any]]:
-    """Run ddgs outside the event loop, with a deadline; raise on upstream errors."""
+    """Search the web, with Wikipedia as a fallback for non-current facts."""
     count = limit if limit is not None else config.web_search_max_results
 
     def run() -> list[dict[str, Any]]:
@@ -109,7 +113,39 @@ async def search_web(query: str, *, limit: int | None = None) -> list[dict[str, 
                  "url": str(item.get("href", "")), "score": None}
                 for item in raw if item.get("body") or item.get("title")]
 
-    return await asyncio.wait_for(asyncio.to_thread(run), timeout=config.web_search_timeout)
+    try:
+        results = await asyncio.wait_for(asyncio.to_thread(run),
+                                         timeout=max(1.0, config.web_search_timeout / 2))
+        if results:
+            return results
+    except Exception:
+        pass
+    if re.search(r"最新|今天|当前|现在|实时|新闻|recent|latest|today", query, re.I):
+        raise RuntimeError("实时网页搜索暂不可用，请稍后重试")
+    encyclopedia_query = re.sub(
+        r"请联网搜索|請聯網搜尋|联网搜索|聯網搜尋|请搜索|請搜尋|是什么意思|是什麼意思|"
+        r"是什么|是什麼|的定义|的定義|解释|解釋|[？?。]",
+        "", query, flags=re.I,
+    ).strip() or query
+    site = "zh" if re.search(r"[\u3400-\u9fff]", encyclopedia_query) else "en"
+    endpoint = f"https://{site}.wikipedia.org/w/api.php"
+    async with httpx.AsyncClient(timeout=max(1.0, config.web_search_timeout / 2)) as client:
+        response = await client.get(
+            endpoint,
+            params={"action": "query", "list": "search", "srsearch": encyclopedia_query,
+                    "srlimit": count, "format": "json"},
+            headers={"User-Agent": "RealtimeMeetingAssistant/1.0 (public knowledge search)"},
+        )
+        response.raise_for_status()
+    found = response.json().get("query", {}).get("search", [])
+    results = [{"source": "web", "title": str(item.get("title", "")),
+                "snippet": html.unescape(re.sub(r"<[^>]+>", "", item.get("snippet", "")))[:_CHUNK_SIZE],
+                "url": f"https://{site}.wikipedia.org/wiki/{quote(str(item.get('title', '')).replace(' ', '_'))}",
+                "score": None}
+               for item in found if item.get("title")]
+    if not results:
+        raise RuntimeError("网页搜索未返回结果")
+    return results
 
 
 def needs_web_search(query: str, local_results: list[dict[str, Any]]) -> bool:

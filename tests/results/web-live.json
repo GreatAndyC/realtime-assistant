@@ -1,0 +1,106 @@
+{
+  "meeting_id": "acceptance-web-20261009-v4",
+  "audio": "tests/fixtures/audio/web.wav",
+  "audio_seconds": 10.19,
+  "asset_seconds": 10.19,
+  "wall_seconds": 35.68,
+  "frames_sent": 51,
+  "frames_acked": 51,
+  "events": {
+    "agent.state": 5,
+    "ack": 52,
+    "asr.partial": 16,
+    "asr.final": 2,
+    "agent.step": 2,
+    "search.result": 1,
+    "llm.delta": 190,
+    "llm.done": 1,
+    "tts.audio": 1,
+    "minutes.ready": 1
+  },
+  "languages": {
+    "zh": 2
+  },
+  "states": [
+    "LISTENING",
+    "ANSWERING",
+    "LISTENING",
+    "ENDING",
+    "ENDED"
+  ],
+  "error_codes": [],
+  "saved_utterances": 2,
+  "tts_audio_bytes": 607533,
+  "answer_text": "机器学习（machine learning，简称 ML）是人工智能的一个分支，主要研究和设计让计算机能从数据中自动“学习”的算法——即从数据中自动分析出规律，再用这些规律对未知数据进行预测（资料 1，https://zh.wikipedia.org/wiki/机器学习）。\n\n另一种表述是：它使计算机系统能够从数据中学习和改进性能，而无需显式编程；1959 年亚瑟·李·塞谬尔把它定义为“一门使计算机无需显式编程即可学习的学科”（资料 2，https://zh.wikipedia.org/wiki/机器学习概述）。\n\n补充一点：深度学习是机器学习的分支，以人工神经网络为架构对数据进行表征学习（资料 3，https://zh.wikipedia.org/wiki/深度学习）。\n\n以上是联网检索到的事实资料。如果你是想把机器学习相关内容接到我们正在讨论的测试计划里，可以告诉我具体想解决什么问题，我再帮你在会议内容里对照一下。",
+  "tool_steps": [
+    {
+      "tool": "search_web",
+      "status": "started",
+      "count": null
+    },
+    {
+      "tool": "search_web",
+      "status": "done",
+      "count": 4
+    }
+  ],
+  "search_sources": {
+    "web": 4
+  },
+  "timeline": [
+    {
+      "second": 5.85,
+      "type": "asr.final",
+      "status": null,
+      "seq": 24
+    },
+    {
+      "second": 6.66,
+      "type": "agent.step",
+      "status": "started",
+      "seq": null
+    },
+    {
+      "second": 9.85,
+      "type": "asr.final",
+      "status": null,
+      "seq": 44
+    },
+    {
+      "second": 11.7,
+      "type": "agent.step",
+      "status": "done",
+      "seq": null
+    },
+    {
+      "second": 16.14,
+      "type": "llm.done",
+      "status": null,
+      "seq": null
+    },
+    {
+      "second": 30.07,
+      "type": "tts.audio",
+      "status": null,
+      "seq": null
+    },
+    {
+      "second": 35.68,
+      "type": "minutes.ready",
+      "status": "final",
+      "seq": null
+    }
+  ],
+  "partial_minutes_received": 0,
+  "final_minutes": true,
+  "final_minutes_source_ids": 2,
+  "transcript_first": [
+    "小慧，请联网搜索机器学习是什么意思？",
+    "我们继续讨论测试计划。"
+  ],
+  "transcript_last": [
+    "小慧，请联网搜索机器学习是什么意思？",
+    "我们继续讨论测试计划。"
+  ],
+  "passed": true
+}
